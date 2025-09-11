@@ -22,17 +22,16 @@ def jq_login():
 def fetch_kline_from_jq(stock_code):
     jq_login()
 
-    # 自动判断后缀（6开头为沪市）
     if '.' not in stock_code:
         stock_code += '.XSHG' if stock_code.startswith('6') else '.XSHE'
 
     try:
-        start_date = "2024-06-03"
-        end_date ="2024-06-05"
+        start_date = "2024-06-05"
+        end_date = datetime.today().strftime('%Y-%m-%d')
         df = get_price(stock_code, start_date=start_date, end_date=end_date, frequency='daily')
-        if df.empty:
+        if df is None or df.empty:
             st.warning("⚠️ 聚宽返回空数据")
-            return df
+            return pd.DataFrame()
         df = df.rename(columns={
             'open': 'open',
             'close': 'close',
@@ -50,16 +49,24 @@ def fetch_kline_from_jq(stock_code):
 st.set_page_config(page_title="智能股票分析助手", layout="wide")
 st.title("📈 ChatGPT + 技术面 股票分析工具")
 
-# 股票代码输入
 stock_code = st.text_input("请输入股票代码 (例如: 000001.SZ or 600519.SH):")
 
-# 技术分析函数
 def analyze_tech(df):
-    df['MACD'], df['MACD_signal'], df['MACD_hist'] = ta.macd(df['close'])
-    df['RSI'] = ta.rsi(df['close'])
+    if df.empty:
+        st.warning("⚠️ 数据为空，无法计算指标")
+        return df
+
+    macd_result = ta.macd(df['close'])
+    rsi_result = ta.rsi(df['close'])
+
+    if macd_result is None:
+        st.error("❌ MACD 指标计算失败")
+        return df
+
+    df['MACD'], df['MACD_signal'], df['MACD_hist'] = macd_result
+    df['RSI'] = rsi_result if rsi_result is not None else 0
     return df
 
-# ChatGPT 解读函数
 def explain_by_gpt(stock_code, last_row):
     prompt = f"""
     请你分析股票 {stock_code}：
@@ -74,7 +81,6 @@ def explain_by_gpt(stock_code, last_row):
     )
     return res.choices[0].message.content
 
-# 主逻辑
 if stock_code:
     with st.spinner("正在获取数据和分析中..."):
         try:
