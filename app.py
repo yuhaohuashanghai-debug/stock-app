@@ -59,7 +59,7 @@ MACD值：{last_row['MACD']:.3f}, 信号线：{last_row['MACD_signal']:.3f}, 柱
 RSI：{last_row['RSI']:.2f}
 请判断是否有买入/卖出/观望信号，并说明理由。"""
     res = openai.ChatCompletion.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=[{"role": "user", "content": prompt}]
     )
     return res.choices[0].message.content
