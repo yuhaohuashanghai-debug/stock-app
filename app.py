@@ -53,10 +53,7 @@ def analyze_tech(df):
     return df
 
 from openai import OpenAI
-
-from openai import OpenAI, OpenAIError, RateLimitError, AuthenticationError
-
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+from openai import RateLimitError, AuthenticationError, OpenAIError
 
 def explain_by_gpt(stock_code, row):
     prompt = f"""
@@ -64,12 +61,13 @@ def explain_by_gpt(stock_code, row):
 
 股票代码：{stock_code}
 分析数据如下：
-{row.to_string()}
+{last_row.to_string()}
 
 输出示例：
-买入/持有/观望/卖出，理由（简短）
+买入/持有/观望/卖出，理由（简要）
 """
     try:
+        client = OpenAI()  # ✅ 定义 client
         response = client.chat.completions.create(
             model="gpt-4o",  # 或 gpt-3.5-turbo
             messages=[{"role": "user", "content": prompt}],
