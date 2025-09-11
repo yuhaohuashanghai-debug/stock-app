@@ -27,7 +27,7 @@ def fetch_kline_from_jq(stock_code):
 
     try:
         start_date = "2024-06-05"
-        end_date = "2024-06-10"
+        end_date = datetime.today().strftime('%Y-%m-%d')
         df = get_price(stock_code, start_date=start_date, end_date=end_date, frequency='daily')
         if df is None or df.empty:
             st.warning("⚠️ 聚宽返回空数据")
@@ -39,7 +39,7 @@ def fetch_kline_from_jq(stock_code):
             'low': 'low',
             'volume': 'volume',
         })
-        df = df.reset_index().rename(columns={"index": "date"})
+        df = df.reset_index()
         return df
     except Exception as e:
         st.error(f"❌ 获取行情数据失败（聚宽）：{e}")
