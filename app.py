@@ -27,8 +27,8 @@ def fetch_kline_from_jq(stock_code):
         stock_code += '.XSHG' if stock_code.startswith('6') else '.XSHE'
 
     try:
-        start_date = "2024-06-05"
-        end_date = datetime.today().strftime('%Y-%m-%d')
+        start_date = "2024-06-03"
+        end_date ="2024-06-05"
         df = get_price(stock_code, start_date=start_date, end_date=end_date, frequency='daily')
         if df.empty:
             st.warning("⚠️ 聚宽返回空数据")
