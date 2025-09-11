@@ -56,7 +56,7 @@ from openai import OpenAI
 
 from openai import OpenAI, OpenAIError, RateLimitError, AuthenticationError
 
-client = OpenAI(api_key=st.secrets["openai"]["api_key"])
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 def explain_by_gpt(stock_code, row):
     prompt = f"""
