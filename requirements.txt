@@ -1,7 +1,0 @@
-streamlit
-pandas
-pandas_ta
-tushare
-plotly
-openai
-requests
