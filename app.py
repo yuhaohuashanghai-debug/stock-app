@@ -5,7 +5,7 @@ import pandas_ta as ta
 import openai
 import akshare as ak
 
-openai.api_key = st.secrets["openai"]["api_key"]
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="AkShare + ChatGPT 股票分析", layout="wide")
 st.title("📈 AkShare + ChatGPT 技术面股票分析")
