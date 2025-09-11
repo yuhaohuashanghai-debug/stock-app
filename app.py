@@ -4,7 +4,7 @@ import pandas_ta as ta
 import openai
 import requests
 
-openai.api_key = st.secrets["openai_api_key"]
+openai.api_key = st.secrets["general"]["openai_api_key"]
 
 st.set_page_config(page_title="智能股票分析助手", layout="wide")
 st.title("📈 ChatGPT + 技术面 股票分析工具")
