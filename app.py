@@ -105,7 +105,7 @@ if stock_code:
         suggestion = explain_by_gpt(stock_code, last_row)
         st.markdown(suggestion)
         
-        import plotly.graph_objects as go
+import plotly.graph_objects as go
 import plotly.express as px
 
 # 📉 K线图 + 成交量图
