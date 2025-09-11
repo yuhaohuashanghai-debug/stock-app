@@ -27,7 +27,7 @@ def fetch_kline_from_jq(stock_code):
 
     try:
         start_date = "2024-06-05"
-        end_date = "2025-09-10"
+        end_date = "2025-06-10"
         df = get_price(stock_code, start_date=start_date, end_date=end_date, frequency='daily')
         if df is None or df.empty:
             st.warning("⚠️ 聚宽返回空数据")
