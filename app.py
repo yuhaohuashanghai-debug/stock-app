@@ -52,19 +52,26 @@ st.title("📈 ChatGPT + 技术面 股票分析工具")
 stock_code = st.text_input("请输入股票代码 (例如: 000001.SZ or 600519.SH):")
 
 def analyze_tech(df):
-    if df.empty:
-        st.warning("⚠️ 数据为空，无法计算指标")
-        return df
+    # 计算 MACD，返回包含 MACD、信号线、柱状图的 DataFrame
+    macd_df = ta.macd(df['close'])
+    if macd_df is not None and not macd_df.empty:
+        df = pd.concat([df, macd_df], axis=1)
+        # 统一重命名以便后续调用
+        df.rename(columns={
+            'MACD_12_26_9': 'MACD',
+            'MACDs_12_26_9': 'MACD_signal',
+            'MACDh_12_26_9': 'MACD_hist'
+        }, inplace=True)
+    else:
+        st.warning("⚠️ 无法计算 MACD 指标，可能因数据不足")
 
-    macd_result = ta.macd(df['close'])
-    rsi_result = ta.rsi(df['close'])
+    # 计算 RSI 指标（默认14日）
+    rsi_series = ta.rsi(df['close'])
+    if rsi_series is not None:
+        df['RSI'] = rsi_series
+    else:
+        st.warning("⚠️ 无法计算 RSI 指标，可能因数据不足")
 
-    if macd_result is None:
-        st.error("❌ MACD 指标计算失败")
-        return df
-
-    df['MACD'], df['MACD_signal'], df['MACD_hist'] = macd_result
-    df['RSI'] = rsi_result if rsi_result is not None else 0
     return df
 
 def explain_by_gpt(stock_code, last_row):
