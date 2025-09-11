@@ -54,26 +54,40 @@ def analyze_tech(df):
 
 from openai import OpenAI
 
-def explain_by_gpt(stock_code, last_row):
+from openai import OpenAI, OpenAIError, RateLimitError, AuthenticationError
+
+client = OpenAI(api_key=st.secrets["openai"]["api_key"])
+
+def explain_by_gpt(stock_code, row):
     prompt = f"""
-你是一个技术面分析师，请根据以下股票的技术指标给出简要策略建议：
+你是一名技术面分析师，请根据以下股票的技术指标给出简明逻辑策略建议：
 
 股票代码：{stock_code}
 分析数据如下：
-{last_row.to_string()}
+{row.to_string()}
 
 输出示例：
-买入/持有/观望/卖出，理由（简短）"""
+买入/持有/观望/卖出，理由（简短）
+"""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",  # 或 gpt-3.5-turbo
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7
+        )
+        return response.choices[0].message.content.strip()
 
-    client = OpenAI()
+    except RateLimitError:
+        return "❌ ChatGPT 请求过于频繁，请稍后重试。"
 
-    res = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "user", "content": prompt}
-        ]
-    )
-    return res.choices[0].message.content.strip()
+    except AuthenticationError:
+        return "❌ OpenAI API 密钥错误或已失效，请检查 `secrets.toml` 中的设置。"
+
+    except OpenAIError as e:
+        return f"❌ OpenAI 请求失败：{str(e)}"
+
+    except Exception as e:
+        return f"❌ 系统错误：{str(e)}"
 
 
 stock_code = st.text_input("请输入股票代码（6位，不带 SH/SZ 后缀）如 600519:")
