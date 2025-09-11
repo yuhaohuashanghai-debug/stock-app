@@ -12,6 +12,10 @@ st.title("📈 ChatGPT + 技术面 股票分析工具")
 stock_code = st.text_input("请输入股票代码 (例如: 000001.SZ or 600519.SH):")
 
 def fetch_eastmoney_kline(stock_code):
+    # 自动补全后缀
+    if '.' not in stock_code:
+        stock_code = stock_code + '.SH' if stock_code.startswith('6') else stock_code + '.SZ'
+
     code = stock_code.replace(".SH", "1").replace(".SZ", "0")
     url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get"
     params = {
@@ -23,7 +27,12 @@ def fetch_eastmoney_kline(stock_code):
         "beg": "20220101",
         "end": "20500101"
     }
+
     res = requests.get(url, params=params).json()
+    if not res or 'data' not in res or not res['data']:
+        st.error("❌ 获取行情数据失败，可能是代码错误或不支持的股票")
+        return pd.DataFrame()
+
     klines = res['data']['klines']
     df = pd.DataFrame([x.split(',') for x in klines], columns=[
         'date','open','close','high','low','volume','turnover','amplitude','chg_pct','chg_amt','turnover_rate'])
