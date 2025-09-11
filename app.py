@@ -52,25 +52,40 @@ st.title("📈 ChatGPT + 技术面 股票分析工具")
 stock_code = st.text_input("请输入股票代码 (例如: 000001.SZ or 600519.SH):")
 
 def analyze_tech(df):
-    # 计算 MACD，返回包含 MACD、信号线、柱状图的 DataFrame
-    macd_df = ta.macd(df['close'])
-    if macd_df is not None and not macd_df.empty:
-        df = pd.concat([df, macd_df], axis=1)
-        # 统一重命名以便后续调用
-        df.rename(columns={
-            'MACD_12_26_9': 'MACD',
-            'MACDs_12_26_9': 'MACD_signal',
-            'MACDh_12_26_9': 'MACD_hist'
-        }, inplace=True)
-    else:
-        st.warning("⚠️ 无法计算 MACD 指标，可能因数据不足")
+    # 确保 'close' 列存在且不为空
+    if 'close' not in df.columns or df['close'].isna().all():
+        st.error("❌ 技术指标计算失败：未找到有效的收盘价数据")
+        return df
 
-    # 计算 RSI 指标（默认14日）
-    rsi_series = ta.rsi(df['close'])
-    if rsi_series is not None:
-        df['RSI'] = rsi_series
-    else:
-        st.warning("⚠️ 无法计算 RSI 指标，可能因数据不足")
+    # 至少需要 30 条数据计算 MACD
+    if len(df['close'].dropna()) < 30:
+        st.warning("⚠️ 无法计算 MACD：数据量过少（至少需30条有效收盘价）")
+        return df
+
+    # 计算 MACD（添加异常处理）
+    try:
+        macd_df = ta.macd(df['close'])
+        if macd_df is not None and not macd_df.empty:
+            df = pd.concat([df, macd_df], axis=1)
+            df.rename(columns={
+                'MACD_12_26_9': 'MACD',
+                'MACDs_12_26_9': 'MACD_signal',
+                'MACDh_12_26_9': 'MACD_hist'
+            }, inplace=True)
+        else:
+            st.warning("⚠️ 无法计算 MACD 指标，macd_df 为空")
+    except Exception as e:
+        st.error(f"❌ MACD 指标计算异常：{e}")
+
+    # 计算 RSI
+    try:
+        rsi_series = ta.rsi(df['close'])
+        if rsi_series is not None:
+            df['RSI'] = rsi_series
+        else:
+            st.warning("⚠️ 无法计算 RSI 指标")
+    except Exception as e:
+        st.error(f"❌ RSI 指标计算异常：{e}")
 
     return df
 
