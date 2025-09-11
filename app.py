@@ -105,53 +105,60 @@ if stock_code:
         suggestion = explain_by_gpt(stock_code, last_row)
         st.markdown(suggestion)
         
-import plotly.graph_objects as go
-import plotly.express as px
+if stock_code:
+    with st.spinner("正在获取数据和分析中..."):
+        df = fetch_ak_kline(stock_code)
+        if df.empty:
+            st.stop()
 
-# 📉 K线图 + 成交量图
-st.subheader("📉 K线图 & 成交量")
-fig = go.Figure()
+        df = analyze_tech(df)
+        last_row = df.iloc[-1]
 
-fig.add_trace(go.Candlestick(
-    x=df["date"],
-    open=df["开盘"],
-    high=df["最高"],
-    low=df["最低"],
-    close=df["收盘"],
-    name="K线"
-))
-fig.add_trace(go.Bar(
-    x=df["date"],
-    y=df["成交量"],
-    name="成交量",
-    marker=dict(color='lightblue'),
-    yaxis='y2'
-))
+        st.subheader("📊 最近行情与技术指标")
+        st.dataframe(df.tail(5)[['date', 'close', 'MACD', 'MACD_signal', 'RSI']].set_index('date'))
 
-fig.update_layout(
-    xaxis_rangeslider_visible=False,
-    yaxis_title="价格",
-    yaxis2=dict(title="成交量", overlaying="y", side="right", showgrid=False),
-    height=600
-)
-st.plotly_chart(fig, use_container_width=True)
+        # ✅ 插入图表（要保证在 if 块内部）
+        import plotly.graph_objects as go
 
-# 📈 MACD 图
-st.subheader("📈 MACD 指标图")
-macd_fig = go.Figure()
-macd_fig.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD", line=dict(color="blue")))
-macd_fig.add_trace(go.Scatter(x=df["date"], y=df["MACD_signal"], name="Signal", line=dict(color="orange")))
-macd_fig.add_trace(go.Bar(x=df["date"], y=df["MACD_hist"], name="Histogram"))
-macd_fig.update_layout(height=400)
-st.plotly_chart(macd_fig, use_container_width=True)
+        st.subheader("📉 K线图 + 成交量图")
+        fig = go.Figure()
 
-# 📈 RSI 图
-st.subheader("📈 RSI 指标图")
-rsi_fig = px.line(df, x="date", y="RSI", title="RSI 指标", markers=True)
-rsi_fig.add_hline(y=70, line_dash="dash", line_color="red")
-rsi_fig.add_hline(y=30, line_dash="dash", line_color="green")
-rsi_fig.update_layout(height=400)
-st.plotly_chart(rsi_fig, use_container_width=True)
+        fig.add_trace(go.Candlestick(
+            x=df["date"],
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name="K线"
+        ))
+
+        fig.add_trace(go.Bar(
+            x=df["date"],
+            y=df["成交量"],
+            name="成交量",
+            marker=dict(color='lightblue'),
+            yaxis="y2"
+        ))
+
+        fig.update_layout(
+            yaxis2=dict(title="成交量", overlaying="y", side="right", showgrid=False),
+            height=600
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # MACD 图
+        st.subheader("📈 MACD 指标图")
+        # ...
+
+        # RSI 图
+        st.subheader("📉 RSI 指标图")
+        # ...
+
+        # ChatGPT 建议
+        st.subheader("🧠 ChatGPT 策略建议")
+        suggestion = explain_by_gpt(stock_code, last_row)
+        st.markdown(suggestion)
 
 else:
     st.info("请输入6位股票代码，例如 000001 或 600519")
