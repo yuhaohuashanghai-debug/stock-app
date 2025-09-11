@@ -39,7 +39,7 @@ def fetch_kline_from_jq(stock_code):
             'low': 'low',
             'volume': 'volume',
         })
-        df = df.reset_index()
+        df = df.reset_index().rename(columns={"index": "date"})
         return df
     except Exception as e:
         st.error(f"❌ 获取行情数据失败（聚宽）：{e}")
