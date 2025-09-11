@@ -12,7 +12,6 @@ st.title("📈 ChatGPT + 技术面 股票分析工具")
 stock_code = st.text_input("请输入股票代码 (例如: 000001.SZ or 600519.SH):")
 
 def fetch_eastmoney_kline(stock_code):
-    # 自动补全后缀
     if '.' not in stock_code:
         stock_code = stock_code + '.SH' if stock_code.startswith('6') else stock_code + '.SZ'
 
@@ -28,16 +27,40 @@ def fetch_eastmoney_kline(stock_code):
         "end": "20500101"
     }
 
-    res = requests.get(url, params=params).json()
-    if not res or 'data' not in res or not res['data']:
-        st.error("❌ 获取行情数据失败，可能是代码错误或不支持的股票")
-        return pd.DataFrame()
+    try:
+        res = requests.get(url, params=params).json()
+        if USE_STREAMLIT:
+            st.write("🛠️ 原始返回数据:", res)
+        else:
+            print("🛠️ 原始返回数据:", res)
 
-    klines = res['data']['klines']
-    df = pd.DataFrame([x.split(',') for x in klines], columns=[
-        'date','open','close','high','low','volume','turnover','amplitude','chg_pct','chg_amt','turnover_rate'])
-    df['close'] = df['close'].astype(float)
-    return df
+        if not res or 'data' not in res or not res['data'] or not res['data'].get('klines'):
+            msg = "❌ 获取行情数据失败，服务器返回空数据或股票代码异常"
+            if USE_STREAMLIT:
+                st.error(msg)
+            else:
+                print(msg)
+            return pd.DataFrame()
+
+        klines = res['data']['klines']
+        if len(klines) == 0:
+            if USE_STREAMLIT:
+                st.warning("⚠️ 返回的K线数据为空")
+            else:
+                print("⚠️ 返回的K线数据为空")
+            return pd.DataFrame()
+
+        df = pd.DataFrame([x.split(',') for x in klines], columns=[
+            'date','open','close','high','low','volume','turnover','amplitude','chg_pct','chg_amt','turnover_rate'])
+        df['close'] = pd.to_numeric(df['close'], errors='coerce')
+        return df
+
+    except Exception as e:
+        if USE_STREAMLIT:
+            st.error(f"❌ 接口请求异常：{e}")
+        else:
+            print(f"❌ 接口请求异常：{e}")
+        return pd.DataFrame()
 
 def analyze_tech(df):
     df['MACD'], df['MACD_signal'], df['MACD_hist'] = ta.macd(df['close'])
