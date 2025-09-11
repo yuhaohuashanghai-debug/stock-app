@@ -56,20 +56,33 @@ from openai import OpenAI
 
 client = OpenAI(api_key=st.secrets["openai"]["api_key"])  # ✅ 新写法初始化 client
 
+from openai import OpenAI
+import os
+import time
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 def explain_by_gpt(stock_code, last_row):
     prompt = f"""
     请你分析股票 {stock_code}：
-    当前价格：{last_row['close']:.2f}
-    MACD值：{last_row['MACD']:.3f}, 信号线：{last_row['MACD_signal']:.3f}, 柱值：{last_row['MACD_hist']:.3f}
-    RSI：{last_row['RSI']:.2f}
+    当前价格：{last_row.get('close', 'N/A')}
+    MACD值：{last_row.get('MACD', 'N/A')}, 信号线：{last_row.get('MACD_signal', 'N/A')}
+    RSI：{last_row.get('RSI', 'N/A')}
     请判断是否有买入/卖出/观望信号，并说明理由。
     """
-
-    response = client.chat.completions.create(
-        model="GPT‑4o",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content
+    for _ in range(3):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            time.sleep(2)
+            err_msg = str(e)
+    return f"❌ GPT分析失败：{err_msg}"
 
 stock_code = st.text_input("请输入股票代码（6位，不带 SH/SZ 后缀）如 600519:")
 
