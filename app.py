@@ -2,64 +2,77 @@ import streamlit as st
 import pandas as pd
 import pandas_ta as ta
 import openai
-import jqdatasdk
+from jqdatasdk import auth, get_price
+from datetime import datetime
 
-# ---------------------- 🔐 密钥配置 ----------------------
-openai.api_key = st.secrets["openai_api_key"]
-jq_user = st.secrets["joinquant"]["username"]
-jq_pass = st.secrets["joinquant"]["password"]
+# 设置 OpenAI API Key
+openai.api_key = st.secrets["general"]["openai_api_key"]
 
-# 登录 JoinQuant
-try:
-    jqdatasdk.auth(jq_user, jq_pass)
-    st.success("✅ 聚宽登录成功")
-except Exception as e:
-    st.error(f"❌ 聚宽登录失败: {e}")
-    st.stop()
-
-# ---------------------- 📊 页面配置 ----------------------
-st.set_page_config(page_title="智能股票分析助手", layout="wide")
-st.title("📈 ChatGPT + 技术面 股票分析工具")
-
-stock_code = st.text_input("请输入股票代码 (例如: 000001.SZ or 600519.SH):")
-
-# ---------------------- 🔌 数据源接入 (聚宽) ----------------------
-def fetch_kline_from_jq(stock_code):
+# 聚宽登录
+@st.cache_data(show_spinner="🔐 正在登录聚宽...")
+def jq_login():
     try:
-        if '.' not in stock_code:
-            stock_code = stock_code + '.XSHE' if stock_code.startswith('0') else stock_code + '.XSHG'
+        auth(st.secrets["jq"]["account"], st.secrets["jq"]["password"])
+        st.success("✅ 聚宽登录成功")
+    except Exception as e:
+        st.error(f"❌ 聚宽登录失败：{e}")
+        st.stop()
 
-        df = jqdatasdk.get_price(stock_code, start_date="2023-01-01", end_date="2025-12-31", frequency="daily", fields=["open", "close", "high", "low", "volume"])
+# 获取K线数据（聚宽）
+def fetch_kline_from_jq(stock_code):
+    jq_login()
 
+    if '.' not in stock_code:
+        stock_code += '.XSHG' if stock_code.startswith('6') else '.XSHE'
+
+    try:
+        start_date = "2024-06-05"
+        end_date = "2024-06-10"
+        df = get_price(stock_code, start_date=start_date, end_date=end_date, frequency='daily')
         if df is None or df.empty:
-            st.warning("⚠️ 获取K线数据为空，请检查股票代码或权限")
+            st.warning("⚠️ 聚宽返回空数据")
             return pd.DataFrame()
-
+        df = df.rename(columns={
+            'open': 'open',
+            'close': 'close',
+            'high': 'high',
+            'low': 'low',
+            'volume': 'volume',
+        })
         df = df.reset_index().rename(columns={"index": "date"})
-        df['date'] = pd.to_datetime(df['date']).dt.strftime("%Y-%m-%d")
-        df = df.dropna()
         return df
     except Exception as e:
         st.error(f"❌ 获取行情数据失败（聚宽）：{e}")
         return pd.DataFrame()
 
-# ---------------------- 📈 技术面分析 ----------------------
+# 页面配置
+st.set_page_config(page_title="智能股票分析助手", layout="wide")
+st.title("📈 ChatGPT + 技术面 股票分析工具")
+
+stock_code = st.text_input("请输入股票代码 (例如: 000001.SZ or 600519.SH):")
+
 def analyze_tech(df):
-    df['MACD'], df['MACD_signal'], df['MACD_hist'] = ta.macd(df['close'])
-    df['RSI'] = ta.rsi(df['close'])
-    df['MACD'] = df['MACD'].astype(float)
-    df['MACD_signal'] = df['MACD_signal'].astype(float)
-    df['MACD_hist'] = df['MACD_hist'].astype(float)
-    df['RSI'] = df['RSI'].astype(float)
+    if df.empty:
+        st.warning("⚠️ 数据为空，无法计算指标")
+        return df
+
+    macd_result = ta.macd(df['close'])
+    rsi_result = ta.rsi(df['close'])
+
+    if macd_result is None:
+        st.error("❌ MACD 指标计算失败")
+        return df
+
+    df['MACD'], df['MACD_signal'], df['MACD_hist'] = macd_result
+    df['RSI'] = rsi_result if rsi_result is not None else 0
     return df
 
-# ---------------------- 🤖 ChatGPT 解释 ----------------------
 def explain_by_gpt(stock_code, last_row):
     prompt = f"""
     请你分析股票 {stock_code}：
-    当前价格：{float(last_row['close']):.2f}
-    MACD值：{float(last_row['MACD']):.3f}, 信号线：{float(last_row['MACD_signal']):.3f}, 柱值：{float(last_row['MACD_hist']):.3f}
-    RSI：{float(last_row['RSI']):.2f}
+    当前价格：{last_row['close']:.2f}
+    MACD值：{last_row['MACD']:.3f}, 信号线：{last_row['MACD_signal']:.3f}, 柱值：{last_row['MACD_hist']:.3f}
+    RSI：{last_row['RSI']:.2f}
     请判断是否有买入/卖出/观望信号，并说明理由。
     """
     res = openai.ChatCompletion.create(
@@ -68,7 +81,6 @@ def explain_by_gpt(stock_code, last_row):
     )
     return res.choices[0].message.content
 
-# ---------------------- 🔄 主程序逻辑 ----------------------
 if stock_code:
     with st.spinner("正在获取数据和分析中..."):
         try:
