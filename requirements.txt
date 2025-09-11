@@ -1,0 +1,6 @@
+streamlit
+pandas
+pandas-ta
+openai>=1.3.0
+akshare
+
