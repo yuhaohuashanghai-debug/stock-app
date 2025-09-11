@@ -52,17 +52,29 @@ def analyze_tech(df):
         st.error(f"❌ RSI 计算异常：{e}")
     return df
 
+from openai import OpenAI
+
 def explain_by_gpt(stock_code, last_row):
-    prompt = f"""请你分析股票 {stock_code}：
-当前价格：{last_row['close']:.2f}
-MACD值：{last_row['MACD']:.3f}, 信号线：{last_row['MACD_signal']:.3f}, 柱值：{last_row['MACD_hist']:.3f}
-RSI：{last_row['RSI']:.2f}
-请判断是否有买入/卖出/观望信号，并说明理由。"""
-    res = openai.ChatCompletion.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}]
+    prompt = f"""
+你是一个技术面分析师，请根据以下股票的技术指标给出简要策略建议：
+
+股票代码：{stock_code}
+分析数据如下：
+{last_row.to_string()}
+
+输出示例：
+买入/持有/观望/卖出，理由（简短）"""
+
+    client = OpenAI()
+
+    res = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "user", "content": prompt}
+        ]
     )
-    return res.choices[0].message.content
+    return res.choices[0].message.content.strip()
+
 
 stock_code = st.text_input("请输入股票代码（6位，不带 SH/SZ 后缀）如 600519:")
 
