@@ -37,7 +37,15 @@ def analyze_tech(df):
         return df
     try:
         macd_df = ta.macd(df['close'])
-        boll_df = ta.bbands(df['close'])
+        if boll_df is not None and all(col in boll_df.columns for col in ['BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0']):
+    df = pd.concat([df, boll_df], axis=1)
+    df.rename(columns={
+        'BBL_20_2.0': 'BOLL_L',
+        'BBM_20_2.0': 'BOLL_M',
+        'BBU_20_2.0': 'BOLL_U',
+    }, inplace=True)
+else:
+    st.warning("⚠️ 布林带指标计算失败，部分图表可能无法显示")
         df = pd.concat([df, macd_df, boll_df], axis=1)
 
         df.rename(columns={
