@@ -217,23 +217,26 @@ if st.button("分析股票"):
         report = ai_analysis(code, df, signals)
         st.write(report)
 
-        # 策略回测
+        # 策略回测（form 提交版）
         st.subheader("📊 策略回测：MACD 金叉/死叉")
-        col1, col2 = st.columns(2)
-        with col1:
-            lookback = st.number_input("回测天数 (lookback)", min_value=30, max_value=365, value=90, step=10)
-        with col2:
-            holding_days = st.number_input("持仓天数 (holding_days)", min_value=1, max_value=30, value=5, step=1)
+        with st.form("backtest_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                lookback = st.number_input("回测天数 (lookback)", min_value=30, max_value=365, value=90, step=10)
+            with col2:
+                holding_days = st.number_input("持仓天数 (holding_days)", min_value=1, max_value=30, value=5, step=1)
+            submitted = st.form_submit_button("运行回测")
 
-        results, trades = backtest_macd(df, lookback=lookback, holding_days=holding_days)
-        st.write(f"过去 {lookback} 天内：")
-        st.write(f"- MACD 金叉次数: {results['金叉']['次数']}，{holding_days}日后上涨胜率: {results['金叉']['胜率']:.2%}")
-        st.write(f"- MACD 死叉次数: {results['死叉']['次数']}，{holding_days}日后下跌胜率: {results['死叉']['胜率']:.2%}")
+        if submitted:
+            results, trades = backtest_macd(df, lookback=lookback, holding_days=holding_days)
+            st.write(f"过去 {lookback} 天内：")
+            st.write(f"- MACD 金叉次数: {results['金叉']['次数']}，{holding_days}日后上涨胜率: {results['金叉']['胜率']:.2%}")
+            st.write(f"- MACD 死叉次数: {results['死叉']['次数']}，{holding_days}日后下跌胜率: {results['死叉']['胜率']:.2%}")
 
-        if trades:
-            st.write(f"最近几次交易回测记录 (持仓 {holding_days} 天)：")
-            trade_df = pd.DataFrame(trades, columns=["信号", "日期", "买入价", "卖出价", "收益率"])
-            trade_df["收益率"] = trade_df["收益率"].map(lambda x: f"{x:.2%}")
-            st.dataframe(trade_df.tail(5))
-        else:
-            st.info("⚠️ 最近没有检测到有效的 MACD 金叉/死叉信号，无法回测。")
+            if trades:
+                st.write(f"最近几次交易回测记录 (持仓 {holding_days} 天)：")
+                trade_df = pd.DataFrame(trades, columns=["信号", "日期", "买入价", "卖出价", "收益率"])
+                trade_df["收益率"] = trade_df["收益率"].map(lambda x: f"{x:.2%}")
+                st.dataframe(trade_df.tail(5))
+            else:
+                st.info("⚠️ 最近没有检测到有效的 MACD 金叉/死叉信号，无法回测。")
