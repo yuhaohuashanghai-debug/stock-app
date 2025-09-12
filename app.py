@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import pandas_ta as ta
@@ -38,15 +39,22 @@ def analyze_tech(df):
     try:
         macd_df = ta.macd(df['close'])
         boll_df = ta.bbands(df['close'])
-        df = pd.concat([df, macd_df, boll_df], axis=1)
+        df = pd.concat([df, macd_df], axis=1)
+
+        if boll_df is not None and all(col in boll_df.columns for col in ['BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0']):
+            df = pd.concat([df, boll_df], axis=1)
+            df.rename(columns={
+                'BBL_20_2.0': 'BOLL_L',
+                'BBM_20_2.0': 'BOLL_M',
+                'BBU_20_2.0': 'BOLL_U',
+            }, inplace=True)
+        else:
+            st.warning("⚠️ 布林带指标计算失败，部分图表可能无法显示")
 
         df.rename(columns={
             'MACD_12_26_9': 'MACD',
             'MACDs_12_26_9': 'MACD_signal',
             'MACDh_12_26_9': 'MACD_hist',
-            'BBL_20_2.0': 'BOLL_L',
-            'BBM_20_2.0': 'BOLL_M',
-            'BBU_20_2.0': 'BOLL_U',
         }, inplace=True)
 
         df['RSI'] = ta.rsi(df['close'])
@@ -90,7 +98,7 @@ def explain_by_gpt(stock_code, row):
     except Exception as e:
         return f"❌ 系统错误：{str(e)}"
 
-# ✅ 用户输入
+# ✅ 用户输入股票代码
 stock_code = st.text_input("请输入股票代码（6位，不带 SH/SZ 后缀）如 600519:")
 
 if stock_code:
@@ -102,97 +110,70 @@ if stock_code:
         df = analyze_tech(df)
         last_row = df.iloc[-1]
 
+        # ✅ 显示最近数据表
         st.subheader("📊 最近行情与技术指标")
         st.dataframe(df.tail(5)[['date', 'close', 'MACD', 'MACD_signal', 'RSI']].set_index('date'))
 
+        # ✅ 图表可视化分页
         st.subheader("📉 图表分析展示")
         chart_tab = st.tabs(["K线+均线+BOLL", "MACD", "RSI 相对强弱指标"])
 
-        # K线 + 均线 + BOLL
         with chart_tab[0]:
             try:
                 fig = go.Figure()
-                fig.add_trace(go.Candlestick(x=df['date'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='K线'))
-                for ma, color in zip(['MA5', 'MA10', 'MA20'], ['blue', 'orange', 'green']):
-                    fig.add_trace(go.Scatter(x=df['date'], y=df[ma], mode='lines', name=ma, line=dict(color=color)))
-                for boll, color in zip(['BOLL_U', 'BOLL_M', 'BOLL_L'], ['red', 'gray', 'red']):
-                    fig.add_trace(go.Scatter(x=df['date'], y=df[boll], mode='lines', name=boll, line=dict(color=color, dash='dot')))
-                fig.add_trace(go.Scatter(x=df[df['buy_signal']]['date'], y=df[df['buy_signal']]['close'], mode='markers', name='买入信号', marker=dict(color='green', size=10)))
-                fig.add_trace(go.Scatter(x=df[df['sell_signal']]['date'], y=df[df['sell_signal']]['close'], mode='markers', name='卖出信号', marker=dict(color='red', size=10)))
-                fig.update_layout(xaxis_rangeslider_visible=False, height=600)
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.error(f"❌ 图表绘制失败：{e}")
+                fig.add_trace(go.Candlestick(
+                    x=df['date'], open=df['open'], high=df['high'],
+                    low=df['low'], close=df['close'], name='K线'))
 
-        # MACD
+                for ma, color in zip(['MA5', 'MA10', 'MA20'], ['blue', 'orange', 'green']):
+                    if ma in df.columns:
+                        fig.add_trace(go.Scatter(x=df['date'], y=df[ma], mode='lines', name=ma, line=dict(color=color)))
+
+                for boll, color in zip(['BOLL_U', 'BOLL_M', 'BOLL_L'], ['red', 'gray', 'red']):
+                    if boll in df.columns:
+                        fig.add_trace(go.Scatter(x=df['date'], y=df[boll], mode='lines', name=boll, line=dict(color=color, dash='dot')))
+
+                if 'buy_signal' in df.columns:
+                    fig.add_trace(go.Scatter(
+                        x=df[df['buy_signal']]['date'], y=df[df['buy_signal']]['close'],
+                        mode='markers', name='买入信号', marker=dict(color='green', size=10, symbol='circle')))
+
+                if 'sell_signal' in df.columns:
+                    fig.add_trace(go.Scatter(
+                        x=df[df['sell_signal']]['date'], y=df[df['sell_signal']]['close'],
+                        mode='markers', name='卖出信号', marker=dict(color='red', size=10, symbol='circle')))
+
+                fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(t=10, b=10))
+                st.plotly_chart(fig, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"❌ K线图绘制失败：{e}")
+
         with chart_tab[1]:
             try:
                 macd_fig = go.Figure()
                 macd_fig.add_trace(go.Scatter(x=df['date'], y=df['MACD'], name='MACD', line=dict(color='blue')))
                 macd_fig.add_trace(go.Scatter(x=df['date'], y=df['MACD_signal'], name='Signal', line=dict(color='orange')))
                 macd_fig.add_trace(go.Bar(x=df['date'], y=df['MACD_hist'], name='Histogram'))
-                macd_fig.update_layout(height=400)
+                macd_fig.update_layout(height=400, margin=dict(t=10, b=10))
                 st.plotly_chart(macd_fig, use_container_width=True)
             except Exception as e:
                 st.error(f"❌ MACD 图绘制失败：{e}")
 
-        # RSI
         with chart_tab[2]:
             try:
                 rsi_fig = go.Figure()
                 rsi_fig.add_trace(go.Scatter(x=df['date'], y=df['RSI'], name='RSI', line=dict(color='purple')))
                 rsi_fig.add_shape(type="line", x0=df['date'].iloc[0], x1=df['date'].iloc[-1], y0=70, y1=70, line=dict(color="red", dash="dash"))
                 rsi_fig.add_shape(type="line", x0=df['date'].iloc[0], x1=df['date'].iloc[-1], y0=30, y1=30, line=dict(color="green", dash="dash"))
-                rsi_fig.update_layout(height=400)
+                rsi_fig.update_layout(height=400, margin=dict(t=10, b=10))
                 st.plotly_chart(rsi_fig, use_container_width=True)
             except Exception as e:
                 st.error(f"❌ RSI 图绘制失败：{e}")
 
-        # ✅ 策略信号回测
-        st.subheader("📈 策略信号回测分析（未来涨跌幅 & 胜率）")
-        try:
-            horizon_list = [3, 5, 10]
-            buy_stats = []
-            sell_stats = []
-
-            for n in horizon_list:
-                buy_future_pct = []
-                for i in df.index:
-                    if i + n < len(df) and df.loc[i, 'buy_signal']:
-                        ret = (df.loc[i + n, 'close'] - df.loc[i, 'close']) / df.loc[i, 'close']
-                        buy_future_pct.append(ret)
-                buy_win = [r for r in buy_future_pct if r > 0]
-                buy_stats.append({
-                    "周期": f"{n}日",
-                    "信号类型": "买入",
-                    "信号次数": len(buy_future_pct),
-                    "平均涨跌幅": f"{(sum(buy_future_pct)/len(buy_future_pct)*100):.2f}%" if buy_future_pct else "无数据",
-                    "胜率": f"{(len(buy_win)/len(buy_future_pct)*100):.2f}%" if buy_future_pct else "无数据"
-                })
-
-                sell_future_pct = []
-                for i in df.index:
-                    if i + n < len(df) and df.loc[i, 'sell_signal']:
-                        ret = (df.loc[i + n, 'close'] - df.loc[i, 'close']) / df.loc[i, 'close']
-                        sell_future_pct.append(ret)
-                sell_win = [r for r in sell_future_pct if r < 0]
-                sell_stats.append({
-                    "周期": f"{n}日",
-                    "信号类型": "卖出",
-                    "信号次数": len(sell_future_pct),
-                    "平均涨跌幅": f"{(sum(sell_future_pct)/len(sell_future_pct)*100):.2f}%" if sell_future_pct else "无数据",
-                    "胜率": f"{(len(sell_win)/len(sell_future_pct)*100):.2f}%" if sell_future_pct else "无数据"
-                })
-
-            result_df = pd.DataFrame(buy_stats + sell_stats)
-            st.dataframe(result_df, use_container_width=True)
-        except Exception as e:
-            st.error(f"❌ 回测模块异常：{e}")
-
-        # ✅ ChatGPT 策略建议
+        # ✅ GPT 策略建议展示
         st.subheader("🧠 ChatGPT 策略建议")
         suggestion = explain_by_gpt(stock_code, last_row)
         st.markdown(suggestion)
-
 else:
     st.info("请输入6位股票代码，例如 000001 或 600519")
