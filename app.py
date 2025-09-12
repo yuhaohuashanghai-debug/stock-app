@@ -110,31 +110,46 @@ def predict_trend(df):
 
 
 # --- 策略回测 ---
-st.subheader("📊 策略回测：MACD 金叉/死叉")
+def backtest_macd(df, lookback=90, holding_days=5):
+    results = {"金叉": {"次数": 0, "胜率": 0}, "死叉": {"次数": 0, "胜率": 0}}
+    trades = []
 
-with st.form("backtest_form"):
-    col1, col2 = st.columns(2)
-    with col1:
-        lookback = st.number_input("回测天数 (lookback)", min_value=30, max_value=365, value=90, step=10)
-    with col2:
-        holding_days = st.number_input("持仓天数 (holding_days)", min_value=1, max_value=30, value=5, step=1)
-    
-    submitted = st.form_submit_button("运行回测")
+    if "MACD" not in df.columns or "MACD_S" not in df.columns:
+        return results, trades
 
-if submitted:
-    results, trades = backtest_macd(df, lookback=lookback, holding_days=holding_days)
+    df = df.dropna().reset_index(drop=True)
+    df = df.iloc[-lookback:]
 
-    st.write(f"过去 {lookback} 天内：")
-    st.write(f"- MACD 金叉次数: {results['金叉']['次数']}，{holding_days}日后上涨胜率: {results['金叉']['胜率']:.2%}")
-    st.write(f"- MACD 死叉次数: {results['死叉']['次数']}，{holding_days}日后下跌胜率: {results['死叉']['胜率']:.2%}")
+    for i in range(1, len(df) - holding_days):
+        today = df.iloc[i]
+        yesterday = df.iloc[i - 1]
 
-    if trades:
-        st.write(f"最近几次交易回测记录 (持仓 {holding_days} 天)：")
-        trade_df = pd.DataFrame(trades, columns=["信号", "日期", "买入价", "卖出价", "收益率"])
-        trade_df["收益率"] = trade_df["收益率"].map(lambda x: f"{x:.2%}")
-        st.dataframe(trade_df.tail(5))
-    else:
-        st.info("⚠️ 最近没有检测到有效的 MACD 金叉/死叉信号，无法回测。")
+        # 金叉
+        if yesterday["MACD"] <= yesterday["MACD_S"] and today["MACD"] > today["MACD_S"]:
+            entry_price = today["close"]
+            exit_price = df.iloc[i + holding_days]["close"]
+            ret = (exit_price - entry_price) / entry_price
+            trades.append(("金叉", today["date"], entry_price, exit_price, ret))
+            results["金叉"]["次数"] += 1
+            if ret > 0:
+                results["金叉"]["胜率"] += 1
+
+        # 死叉
+        if yesterday["MACD"] >= yesterday["MACD_S"] and today["MACD"] < today["MACD_S"]:
+            entry_price = today["close"]
+            exit_price = df.iloc[i + holding_days]["close"]
+            ret = (exit_price - entry_price) / entry_price
+            trades.append(("死叉", today["date"], entry_price, exit_price, ret))
+            results["死叉"]["次数"] += 1
+            if ret < 0:
+                results["死叉"]["胜率"] += 1
+
+    if results["金叉"]["次数"] > 0:
+        results["金叉"]["胜率"] = results["金叉"]["胜率"] / results["金叉"]["次数"]
+    if results["死叉"]["次数"] > 0:
+        results["死叉"]["胜率"] = results["死叉"]["胜率"] / results["死叉"]["次数"]
+
+    return results, trades
 
 
 # --- ChatGPT 投资解读 ---
