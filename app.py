@@ -32,26 +32,37 @@ def analyze_tech(df):
         st.error("❌ 技术指标计算失败：未找到有效的收盘价数据")
         return df
     try:
+        # 指标计算
         macd_df = ta.macd(df['close'])
         boll_df = ta.bbands(df['close'])
         df = pd.concat([df, macd_df, boll_df], axis=1)
+
+        # 正确重命名
         df.rename(columns={
             'MACD_12_26_9': 'MACD',
             'MACDs_12_26_9': 'MACD_signal',
             'MACDh_12_26_9': 'MACD_hist',
             'BBL_20_2.0': 'BOLL_L',
             'BBM_20_2.0': 'BOLL_M',
-            'BBU_20_2.0': 'BOLL_U'
+            'BBU_20_2.0': 'BOLL_U',
         }, inplace=True)
+
+        # RSI
         df['RSI'] = ta.rsi(df['close'])
+
+        # 均线
         df['MA5'] = ta.sma(df['close'], length=5)
         df['MA10'] = ta.sma(df['close'], length=10)
         df['MA20'] = ta.sma(df['close'], length=20)
-        # 买卖点标注（金叉）
+
+        # 金叉死叉标注
         df['buy_signal'] = (df['MACD'] > df['MACD_signal']) & (df['MACD'].shift(1) <= df['MACD_signal'].shift(1))
         df['sell_signal'] = (df['MACD'] < df['MACD_signal']) & (df['MACD'].shift(1) >= df['MACD_signal'].shift(1))
+
     except Exception as e:
         st.error(f"❌ 技术指标计算异常：{e}")
+        return df
+
     return df
 
 def explain_by_gpt(stock_code, row):
