@@ -52,6 +52,47 @@ def analyze_tech(df):
         st.error(f"❌ RSI 计算异常：{e}")
     return df
 
+ st.subheader("📊 趋势图")
+        st.dataframe(df.tail(5)[['date', 'close', 'MACD', 'MACD_signal', 'RSI']].set_index('date'))
+
+        # ✅ 插入图表（要保证在 if 块内部）
+        import plotly.graph_objects as go
+
+        st.subheader("📉 K线图 + 成交量图")
+        fig = go.Figure()
+
+        fig.add_trace(go.Candlestick(
+            x=df["date"],
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name="K线"
+        ))
+
+        fig.add_trace(go.Bar(
+            x=df["date"],
+            y=df["成交量"],
+            name="成交量",
+            marker=dict(color='lightblue'),
+            yaxis="y2"
+        ))
+
+        fig.update_layout(
+            yaxis2=dict(title="成交量", overlaying="y", side="right", showgrid=False),
+            height=600
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # MACD 图
+        st.subheader("📈 MACD 指标图")
+        # ...
+
+        # RSI 图
+        st.subheader("📉 RSI 指标图")
+        # ...
+
 from openai import OpenAI
 from openai import RateLimitError, AuthenticationError, OpenAIError
 
