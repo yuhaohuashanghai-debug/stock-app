@@ -4,6 +4,7 @@ import pandas_ta as ta
 import openai
 import akshare as ak
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from openai import OpenAI, RateLimitError, AuthenticationError, OpenAIError
 
 # ✅ 设置 OpenAI 密钥
@@ -25,6 +26,7 @@ def fetch_ak_kline(code):
         df.sort_values("date", inplace=True)
         df.reset_index(drop=True, inplace=True)
         df["close"] = df["close"].astype(float)
+        df["volume"] = df["volume"].astype(float)
         return df
     except Exception as e:
         st.error(f"❌ AkShare 获取数据失败：{e}")
@@ -57,14 +59,27 @@ def analyze_tech(df):
         df['buy_signal'] = (df['MACD'] > df['MACD_signal']) & (df['MACD'].shift(1) <= df['MACD_signal'].shift(1))
         df['sell_signal'] = (df['MACD'] < df['MACD_signal']) & (df['MACD'].shift(1) >= df['MACD_signal'].shift(1))
 
+        df = df.dropna().reset_index(drop=True)
     except Exception as e:
         st.error(f"❌ 技术指标计算异常：{e}")
     return df
 
+# ✅ 策略回测模块
+def backtest_signals(df, hold_days=5):
+    results = []
+    for i in df[df['buy_signal']].index:
+        if i + hold_days < len(df):
+            future_return = (df.loc[i+hold_days, 'close'] - df.loc[i, 'close']) / df.loc[i, 'close']
+            results.append(future_return)
+    if results:
+        win_rate = sum(r > 0 for r in results) / len(results)
+        return {"样本数": len(results), "平均涨幅": round(sum(results)/len(results)*100, 2), "胜率": round(win_rate*100, 2)}
+    return {"样本数": 0, "平均涨幅": 0, "胜率": 0}
+
 # ✅ ChatGPT 生成策略建议
 def explain_by_gpt(stock_code, row):
     prompt = f"""
-你是一名技术面分析师，请根据以下股票的技术指标给出简明逻辑策略建议：
+你是一名技术面分析师，请根据以下股票的技术指标给出简明逻辑策略建议（偏向短线操作）：
 
 股票代码：{stock_code}
 分析数据如下：
@@ -108,35 +123,40 @@ if stock_code:
 
         # ✅ 图表可视化分页
         st.subheader("📉 图表分析展示")
-        chart_tab = st.tabs(["K线+均线+BOLL", "MACD", "RSI 相对强弱指标"])
+        chart_tab = st.tabs(["K线+均线+BOLL+成交量", "MACD", "RSI 相对强弱指标"])
 
-        # TAB1: K线图 + 均线 + 布林带 + 买卖信号
+        # TAB1: K线图 + 均线 + 布林带 + 买卖信号 + 成交量
         with chart_tab[0]:
             try:
-                fig = go.Figure()
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                    row_heights=[0.7, 0.3], vertical_spacing=0.05)
+
                 fig.add_trace(go.Candlestick(
                     x=df['date'], open=df['open'], high=df['high'],
-                    low=df['low'], close=df['close'], name='K线'))
+                    low=df['low'], close=df['close'], name='K线'), row=1, col=1)
 
                 for ma, color in zip(['MA5', 'MA10', 'MA20'], ['blue', 'orange', 'green']):
                     if ma in df.columns:
-                        fig.add_trace(go.Scatter(x=df['date'], y=df[ma], mode='lines', name=ma, line=dict(color=color)))
+                        fig.add_trace(go.Scatter(x=df['date'], y=df[ma], mode='lines', name=ma, line=dict(color=color)), row=1, col=1)
 
                 for boll, color in zip(['BOLL_U', 'BOLL_M', 'BOLL_L'], ['red', 'gray', 'red']):
                     if boll in df.columns:
-                        fig.add_trace(go.Scatter(x=df['date'], y=df[boll], mode='lines', name=boll, line=dict(color=color, dash='dot')))
+                        fig.add_trace(go.Scatter(x=df['date'], y=df[boll], mode='lines', name=boll, line=dict(color=color, dash='dot')), row=1, col=1)
 
                 if 'buy_signal' in df.columns:
                     fig.add_trace(go.Scatter(
                         x=df[df['buy_signal']]['date'], y=df[df['buy_signal']]['close'],
-                        mode='markers', name='买入信号', marker=dict(color='green', size=10, symbol='circle')))
+                        mode='markers', name='买入信号', marker=dict(color='green', size=10, symbol='triangle-up')), row=1, col=1)
 
                 if 'sell_signal' in df.columns:
                     fig.add_trace(go.Scatter(
                         x=df[df['sell_signal']]['date'], y=df[df['sell_signal']]['close'],
-                        mode='markers', name='卖出信号', marker=dict(color='red', size=10, symbol='circle')))
+                        mode='markers', name='卖出信号', marker=dict(color='red', size=10, symbol='triangle-down')), row=1, col=1)
 
-                fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(t=10, b=10))
+                # 成交量
+                fig.add_trace(go.Bar(x=df['date'], y=df['volume'], name='成交量', marker=dict(color='lightblue')), row=2, col=1)
+
+                fig.update_layout(xaxis_rangeslider_visible=False, height=700, margin=dict(t=10, b=10))
                 st.plotly_chart(fig, use_container_width=True)
 
             except Exception as e:
@@ -166,7 +186,14 @@ if stock_code:
             except Exception as e:
                 st.error(f"❌ RSI 图绘制失败：{e}")
 
-        # ✅ GPT 策略建议展示（放在图表之后）
+        # ✅ 策略回测结果展示
+        st.subheader("📈 策略信号回测结果")
+        backtest_result = backtest_signals(df, hold_days=5)
+        st.write(f"买入信号样本数: {backtest_result['样本数']}")
+        st.write(f"平均 {5} 日涨幅: {backtest_result['平均涨幅']}%")
+        st.write(f"胜率: {backtest_result['胜率']}%")
+
+        # ✅ GPT 策略建议展示（放在最后）
         st.subheader("🧠 ChatGPT 策略建议")
         suggestion = explain_by_gpt(stock_code, last_row)
         st.markdown(suggestion)
