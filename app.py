@@ -30,34 +30,87 @@ def fetch_data(code: str, start_date="20220101"):
 
 # ✅ 技术指标计算
 def add_indicators(df):
+    # 移动均线
     df["MA5"] = ta.sma(df["close"], length=5)
     df["MA10"] = ta.sma(df["close"], length=10)
     df["MA20"] = ta.sma(df["close"], length=20)
+
+    # MACD
     macd = ta.macd(df["close"])
-    df["MACD"], df["MACD_H"], df["MACD_S"] = macd["MACD_12_26_9"], macd["MACDh_12_26_9"], macd["MACDs_12_26_9"]
-    df["RSI"] = ta.rsi(df["close"], length=14)
+    if macd is not None and not macd.empty:
+        df["MACD"] = macd.get("MACD_12_26_9", 0)
+        df["MACD_H"] = macd.get("MACDh_12_26_9", 0)
+        df["MACD_S"] = macd.get("MACDs_12_26_9", 0)
+    else:
+        df["MACD"], df["MACD_H"], df["MACD_S"] = None, None, None
+
+    # RSI
+    rsi = ta.rsi(df["close"], length=14)
+    if rsi is not None and not rsi.empty:
+        df["RSI"] = rsi
+    else:
+        df["RSI"] = None
+
+    # BOLL（布林带）
     boll = ta.bbands(df["close"], length=20, std=2)
-    df["BOLL_UP"], df["BOLL_MID"], df["BOLL_LOW"] = boll["BBU_20_2.0"], boll["BBM_20_2.0"], boll["BBL_20_2.0"]
+    if boll is not None and not boll.empty:
+        # 动态查找列名，防止版本差异
+        up_col = next((c for c in boll.columns if "BBU" in c), None)
+        mid_col = next((c for c in boll.columns if "BBM" in c), None)
+        low_col = next((c for c in boll.columns if "BBL" in c), None)
+
+        df["BOLL_UP"] = boll[up_col] if up_col else None
+        df["BOLL_MID"] = boll[mid_col] if mid_col else None
+        df["BOLL_LOW"] = boll[low_col] if low_col else None
+    else:
+        df["BOLL_UP"], df["BOLL_MID"], df["BOLL_LOW"] = None, None, None
+
     return df
 
-# ✅ 趋势预测逻辑
+
 def predict_trend(df):
     latest = df.iloc[-1]
     signals = []
-    if latest["MACD"] > latest["MACD_S"]:
-        signals.append("MACD 金叉 → 看涨")
-    else:
-        signals.append("MACD 死叉 → 看跌")
 
-    if latest["RSI"] < 30:
-        signals.append("RSI < 30 → 超卖反弹概率大")
-    elif latest["RSI"] > 70:
-        signals.append("RSI > 70 → 超买回落概率大")
+    # --- MACD 判断 ---
+    try:
+        if pd.notna(latest["MACD"]) and pd.notna(latest["MACD_S"]):
+            if latest["MACD"] > latest["MACD_S"]:
+                signals.append("MACD 金叉 → 看涨")
+            else:
+                signals.append("MACD 死叉 → 看跌")
+        else:
+            signals.append("⚠️ MACD 数据不足，无法判断")
+    except Exception:
+        signals.append("⚠️ MACD 计算失败")
 
-    if latest["close"] > latest["BOLL_UP"]:
-        signals.append("股价突破布林上轨 → 短期或回调")
-    elif latest["close"] < latest["BOLL_LOW"]:
-        signals.append("股价跌破布林下轨 → 可能反弹")
+    # --- RSI 判断 ---
+    try:
+        if pd.notna(latest["RSI"]):
+            if latest["RSI"] < 30:
+                signals.append("RSI < 30 → 超卖反弹概率大")
+            elif latest["RSI"] > 70:
+                signals.append("RSI > 70 → 超买回落概率大")
+            else:
+                signals.append("RSI 在正常区间 → 市场相对平稳")
+        else:
+            signals.append("⚠️ RSI 数据不足，无法判断")
+    except Exception:
+        signals.append("⚠️ RSI 计算失败")
+
+    # --- BOLL 判断 ---
+    try:
+        if pd.notna(latest["BOLL_UP"]) and pd.notna(latest["BOLL_LOW"]):
+            if latest["close"] > latest["BOLL_UP"]:
+                signals.append("股价突破布林上轨 → 短期或回调")
+            elif latest["close"] < latest["BOLL_LOW"]:
+                signals.append("股价跌破布林下轨 → 可能反弹")
+            else:
+                signals.append("股价位于布林带中轨附近 → 区间震荡")
+        else:
+            signals.append("⚠️ BOLL 数据不足，无法判断")
+    except Exception:
+        signals.append("⚠️ BOLL 计算失败")
 
     return signals
 
