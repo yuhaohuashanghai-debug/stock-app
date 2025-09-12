@@ -148,11 +148,6 @@ if stock_code:
             except Exception as e:
                 st.error(f"❌ RSI 图绘制失败：{e}")
 
-        # ✅ ChatGPT 策略建议
-        st.subheader("🧠 ChatGPT 策略建议")
-        suggestion = explain_by_gpt(stock_code, last_row)
-        st.markdown(suggestion)
-
         # ✅ 策略信号回测
         st.subheader("📈 策略信号回测分析（未来涨跌幅 & 胜率）")
         try:
@@ -193,6 +188,11 @@ if stock_code:
             st.dataframe(result_df, use_container_width=True)
         except Exception as e:
             st.error(f"❌ 回测模块异常：{e}")
+
+        # ✅ ChatGPT 策略建议
+        st.subheader("🧠 ChatGPT 策略建议")
+        suggestion = explain_by_gpt(stock_code, last_row)
+        st.markdown(suggestion)
 
 else:
     st.info("请输入6位股票代码，例如 000001 或 600519")
