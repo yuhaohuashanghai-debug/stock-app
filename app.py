@@ -1,97 +1,125 @@
 import streamlit as st
 import pandas as pd
-import akshare as ak
 import pandas_ta as ta
+import akshare as ak
 import plotly.graph_objects as go
-from datetime import datetime
+from plotly.subplots import make_subplots
+import openai
 
-# 页面初始化
-st.set_page_config(page_title="短/中线趋势选股系统", layout="wide")
-st.title("📈 趋势跟踪选股系统（A股 / ETF / AkShare）")
+# ✅ 设置 OpenAI API
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# 参数设置
-days_high = st.sidebar.slider("突破周期（日高）", 10, 60, 20)
-volume_ratio = st.sidebar.slider("放量阈值倍数", 1.0, 3.0, 1.5, 0.1)
-macd_enable = st.sidebar.checkbox("启用MACD金叉确认", value=True)
-rsi_enable = st.sidebar.checkbox("启用RSI强势过滤 (>55)", value=True)
-start_date = st.sidebar.date_input("数据起始日期", value=datetime(2022, 1, 1))
+st.set_page_config(page_title="📊 A股策略分析", layout="wide")
+st.title("📈 基于 AkShare + ChatGPT 的 A股技术分析与趋势预测")
 
-# 股票列表输入
-codes_input = st.text_area("输入股票代码列表（用逗号分隔）", "159995, 588170, 518880")
-codes = [x.strip() for x in codes_input.split(',') if len(x.strip()) == 6]
-
-# 数据获取
-def get_data(code):
+# ✅ 获取行情数据函数
+@st.cache_data(ttl=3600)
+def fetch_data(code: str, start_date="20220101"):
     try:
-        df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date.strftime("%Y%m%d"), adjust="qfq")
-        df.rename(columns={"日期": "date", "收盘": "close", "开盘": "open", "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
+        df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date, adjust="qfq")
+        df.rename(columns={
+            "日期": "date", "开盘": "open", "收盘": "close",
+            "最高": "high", "最低": "low", "成交量": "volume"
+        }, inplace=True)
         df["date"] = pd.to_datetime(df["date"])
-        df.set_index("date", inplace=True)
-        df["MA5"] = df["close"].rolling(5).mean()
-        df.ta.macd(close='close', append=True)
-        df.ta.rsi(length=14, append=True)
-        df["vol_ma10"] = df["volume"].rolling(10).mean()
+        df.sort_values("date", inplace=True)
         return df
-    except:
+    except Exception as e:
+        st.error(f"获取数据失败: {e}")
         return pd.DataFrame()
 
-# 策略逻辑
-def check_signal(df):
-    if len(df) < days_high + 5:
-        return False
-    today = df.iloc[-1]
-    prev = df.iloc[-2]
-    highest = df["close"].iloc[-days_high:].max()
-    vol_check = today["volume"] > today["vol_ma10"] * volume_ratio
-    price_check = today["close"] > highest
-    macd_check = today["MACD_12_26_9"] > 0 and prev["MACD_12_26_9"] <= 0 if macd_enable else True
-    rsi_check = today["RSI_14"] > 55 if rsi_enable else True
-    return vol_check and price_check and macd_check and rsi_check
+# ✅ 技术指标计算
+def add_indicators(df):
+    df["MA5"] = ta.sma(df["close"], length=5)
+    df["MA10"] = ta.sma(df["close"], length=10)
+    df["MA20"] = ta.sma(df["close"], length=20)
+    macd = ta.macd(df["close"])
+    df["MACD"], df["MACD_H"], df["MACD_S"] = macd["MACD_12_26_9"], macd["MACDh_12_26_9"], macd["MACDs_12_26_9"]
+    df["RSI"] = ta.rsi(df["close"], length=14)
+    boll = ta.bbands(df["close"], length=20, std=2)
+    df["BOLL_UP"], df["BOLL_MID"], df["BOLL_LOW"] = boll["BBU_20_2.0"], boll["BBM_20_2.0"], boll["BBL_20_2.0"]
+    return df
 
-# 图形化函数
-def plot_chart(df, code):
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=df.index,
-                                 open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-                                 name="K线"))
-    fig.add_trace(go.Scatter(x=df.index, y=df["MA5"], mode="lines", name="MA5", line=dict(width=1)))
-    fig.add_trace(go.Scatter(x=df.index, y=df["MACD_12_26_9"], mode="lines", name="MACD", yaxis="y2", line=dict(color="orange")))
-    fig.add_trace(go.Scatter(x=df.index, y=df["RSI_14"], mode="lines", name="RSI", yaxis="y3", line=dict(color="purple")))
+# ✅ 趋势预测逻辑
+def predict_trend(df):
+    latest = df.iloc[-1]
+    signals = []
+    if latest["MACD"] > latest["MACD_S"]:
+        signals.append("MACD 金叉 → 看涨")
+    else:
+        signals.append("MACD 死叉 → 看跌")
 
-    fig.update_layout(
-        title=f"📊 {code} K线趋势图",
-        xaxis=dict(domain=[0, 1]),
-        yaxis=dict(title="价格"),
-        yaxis2=dict(title="MACD", overlaying="y", side="right", showgrid=False, position=0.95),
-        yaxis3=dict(title="RSI", overlaying="y", side="right", showgrid=False, position=1.0),
-        height=700,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    if latest["RSI"] < 30:
+        signals.append("RSI < 30 → 超卖反弹概率大")
+    elif latest["RSI"] > 70:
+        signals.append("RSI > 70 → 超买回落概率大")
 
-# 筛选结果
-report = []
-for code in codes:
-    df = get_data(code)
-    if df.empty:
-        continue
-    if check_signal(df):
-        today = df.iloc[-1]
-        report.append({
-            "代码": code,
-            "收盘价": today["close"],
-            "MA5": today["MA5"],
-            "MACD": today["MACD_12_26_9"],
-            "RSI": today["RSI_14"],
-            "成交量": today["volume"],
-            "信号": "✅ 突破 + 放量"
-        })
-        plot_chart(df, code)  # 显示图形
+    if latest["close"] > latest["BOLL_UP"]:
+        signals.append("股价突破布林上轨 → 短期或回调")
+    elif latest["close"] < latest["BOLL_LOW"]:
+        signals.append("股价跌破布林下轨 → 可能反弹")
 
-# 展示结果
-st.subheader("📊 满足趋势选股条件的股票")
-if report:
-    st.success(f"共选出 {len(report)} 只股票/ETF 满足当前趋势策略")
-    st.dataframe(pd.DataFrame(report))
-else:
-    st.warning("暂无符合条件的股票/ETF")
+    return signals
+
+# ✅ ChatGPT 解读模块
+def ai_analysis(code, df, signals):
+    latest = df.iloc[-1]
+    prompt = f"""
+你是一名专业的A股分析师，请根据以下数据写一份简短的研报风格解读，内容包含：技术面分析、风险提示、未来一周走势判断。
+股票代码: {code}
+日期: {latest['date'].strftime('%Y-%m-%d')}
+收盘价: {latest['close']}
+MA5: {latest['MA5']:.2f}, MA10: {latest['MA10']:.2f}, MA20: {latest['MA20']:.2f}
+MACD: {latest['MACD']:.2f}, Signal: {latest['MACD_S']:.2f}
+RSI: {latest['RSI']:.2f}
+BOLL: 上轨 {latest['BOLL_UP']:.2f}, 中轨 {latest['BOLL_MID']:.2f}, 下轨 {latest['BOLL_LOW']:.2f}
+信号总结: {"; ".join(signals)}
+要求：语言专业、简洁，面向投资者，不要超过300字。
+    """
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": "你是专业的证券分析师。"},
+                      {"role": "user", "content": prompt}],
+            max_tokens=400,
+            temperature=0.6
+        )
+        return response.choices[0].message["content"]
+    except Exception as e:
+        return f"⚠️ ChatGPT 分析失败: {e}"
+
+# ✅ 页面交互
+code = st.text_input("请输入6位股票代码", value="000001")
+if st.button("分析股票"):
+    df = fetch_data(code)
+    if not df.empty:
+        df = add_indicators(df)
+
+        # 绘图
+        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5,0.25,0.25])
+        fig.add_trace(go.Candlestick(x=df["date"], open=df["open"], high=df["high"],
+                                     low=df["low"], close=df["close"], name="K线"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MA5"], name="MA5", line=dict(width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MA10"], name="MA10", line=dict(width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MA20"], name="MA20", line=dict(width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_UP"], name="BOLL_UP", line=dict(width=1, dash="dot")), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_MID"], name="BOLL_MID", line=dict(width=1, dash="dot")), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_LOW"], name="BOLL_LOW", line=dict(width=1, dash="dot")), row=1, col=1)
+
+        fig.add_trace(go.Bar(x=df["date"], y=df["volume"], name="成交量"), row=2, col=1)
+        fig.add_trace(go.Bar(x=df["date"], y=df["MACD_H"], name="MACD柱状"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MACD_S"], name="信号线"), row=3, col=1)
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 趋势预测
+        st.subheader("📌 技术信号解读")
+        signals = predict_trend(df)
+        for s in signals:
+            st.write("- " + s)
+
+        # AI 文字报告
+        st.subheader("📝 ChatGPT 投资解读")
+        report = ai_analysis(code, df, signals)
+        st.write(report)
