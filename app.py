@@ -217,7 +217,7 @@ if st.button("分析股票"):
         report = ai_analysis(code, df, signals)
         st.write(report)
 
-               # --- 策略回测（form + session_state 保存结果） ---
+                      # --- 策略回测（form + session_state + 锚点跳转） ---
         st.subheader("📊 策略回测：MACD 金叉/死叉")
 
         with st.form("backtest_form"):
@@ -234,9 +234,14 @@ if st.button("分析股票"):
             st.session_state["backtest_trades"] = trades
             st.session_state["lookback"] = lookback
             st.session_state["holding_days"] = holding_days
+            # 提交后设置 URL 参数，刷新后会跳到锚点
+            st.experimental_set_query_params(section="backtest")
 
-        # 🚀 表单提交后刷新也能显示结果
+        # 🚀 提交后刷新也能显示结果
         if "backtest_results" in st.session_state:
+            # 定义一个锚点
+            st.markdown("<a name='backtest'></a>", unsafe_allow_html=True)
+
             results = st.session_state["backtest_results"]
             trades = st.session_state["backtest_trades"]
             lookback = st.session_state["lookback"]
@@ -251,6 +256,16 @@ if st.button("分析股票"):
                 trade_df = pd.DataFrame(trades, columns=["信号", "日期", "买入价", "卖出价", "收益率"])
                 trade_df["收益率"] = trade_df["收益率"].map(lambda x: f"{x:.2%}")
                 st.dataframe(trade_df.tail(5))
+
+                # 📥 下载按钮
+                csv = trade_df.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    label="下载回测结果 CSV",
+                    data=csv,
+                    file_name=f"backtest_{code}.csv",
+                    mime="text/csv"
+                )
             else:
                 st.info("⚠️ 最近没有检测到有效的 MACD 金叉/死叉信号，无法回测。")
+
 
