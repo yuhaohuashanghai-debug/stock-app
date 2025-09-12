@@ -15,6 +15,7 @@ st.set_page_config(page_title="AkShare + ChatGPT 股票分析", layout="wide")
 st.title("📈 AkShare + ChatGPT 技术面股票分析")
 
 # ✅ 获取行情数据
+@st.cache_data(ttl=3600)
 def fetch_ak_kline(code):
     if len(code) != 6:
         st.error("股票代码应为6位数字，例如 000001 或 600519")
@@ -33,6 +34,7 @@ def fetch_ak_kline(code):
         return pd.DataFrame()
 
 # ✅ 技术指标分析
+@st.cache_data(ttl=3600)
 def analyze_tech(df):
     if 'close' not in df.columns or df['close'].isna().all():
         st.error("❌ 技术指标计算失败：未找到有效的收盘价数据")
@@ -115,88 +117,83 @@ if stock_code:
             st.stop()
 
         df = analyze_tech(df)
+        df_plot = df[df['date'] > df['date'].max() - pd.Timedelta(days=90)]  # 默认仅绘图近90日
         last_row = df.iloc[-1]
 
-        # ✅ 显示最近数据表
         st.subheader("📊 最近行情与技术指标")
-        st.dataframe(df.tail(5)[['date', 'close', 'MACD', 'MACD_signal', 'RSI']].set_index('date'))
+        st.dataframe(df.tail(10)[['date', 'close', 'MACD', 'MACD_signal', 'RSI']].set_index('date'), use_container_width=True, height=300)
 
-        # ✅ 图表可视化分页
         st.subheader("📉 图表分析展示")
-        chart_tab = st.tabs(["K线+均线+BOLL+成交量", "MACD", "RSI 相对强弱指标"])
+        chart_tab = st.tabs(["K线+均线+BOLL+信号", "MACD", "RSI", "成交量"])
 
-        # TAB1: K线图 + 均线 + 布林带 + 买卖信号 + 成交量
         with chart_tab[0]:
             try:
-                fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                                    row_heights=[0.7, 0.3], vertical_spacing=0.05)
-
-                fig.add_trace(go.Candlestick(
-                    x=df['date'], open=df['open'], high=df['high'],
-                    low=df['low'], close=df['close'], name='K线'), row=1, col=1)
-
+                fig = make_subplots(rows=1, cols=1)
+                fig.add_trace(go.Candlestick(x=df_plot['date'], open=df_plot['open'], high=df_plot['high'],
+                                             low=df_plot['low'], close=df_plot['close'], name='K线'), row=1, col=1)
                 for ma, color in zip(['MA5', 'MA10', 'MA20'], ['blue', 'orange', 'green']):
-                    if ma in df.columns:
-                        fig.add_trace(go.Scatter(x=df['date'], y=df[ma], mode='lines', name=ma, line=dict(color=color)), row=1, col=1)
-
+                    if ma in df_plot.columns:
+                        fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot[ma], mode='lines', name=ma,
+                                                 line=dict(color=color)), row=1, col=1)
                 for boll, color in zip(['BOLL_U', 'BOLL_M', 'BOLL_L'], ['red', 'gray', 'red']):
-                    if boll in df.columns:
-                        fig.add_trace(go.Scatter(x=df['date'], y=df[boll], mode='lines', name=boll, line=dict(color=color, dash='dot')), row=1, col=1)
+                    if boll in df_plot.columns:
+                        fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot[boll], mode='lines', name=boll,
+                                                 line=dict(color=color, dash='dot')), row=1, col=1)
 
-                if 'buy_signal' in df.columns:
-                    fig.add_trace(go.Scatter(
-                        x=df[df['buy_signal']]['date'], y=df[df['buy_signal']]['close'],
-                        mode='markers', name='买入信号', marker=dict(color='green', size=10, symbol='triangle-up')), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_plot[df_plot['buy_signal']]['date'],
+                                         y=df_plot[df_plot['buy_signal']]['close'], mode='markers', name='买入信号',
+                                         marker=dict(color='green', size=10, symbol='triangle-up')), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_plot[df_plot['sell_signal']]['date'],
+                                         y=df_plot[df_plot['sell_signal']]['close'], mode='markers', name='卖出信号',
+                                         marker=dict(color='red', size=10, symbol='triangle-down')), row=1, col=1)
 
-                if 'sell_signal' in df.columns:
-                    fig.add_trace(go.Scatter(
-                        x=df[df['sell_signal']]['date'], y=df[df['sell_signal']]['close'],
-                        mode='markers', name='卖出信号', marker=dict(color='red', size=10, symbol='triangle-down')), row=1, col=1)
-
-                # 成交量
-                fig.add_trace(go.Bar(x=df['date'], y=df['volume'], name='成交量', marker=dict(color='lightblue')), row=2, col=1)
-
-                fig.update_layout(xaxis_rangeslider_visible=False, height=700, margin=dict(t=10, b=10))
+                fig.update_layout(height=600, margin=dict(t=10, b=10), hovermode='x unified', xaxis_rangeslider_visible=True)
                 st.plotly_chart(fig, use_container_width=True)
-
             except Exception as e:
                 st.error(f"❌ K线图绘制失败：{e}")
 
-        # TAB2: MACD 图
         with chart_tab[1]:
             try:
                 macd_fig = go.Figure()
-                macd_fig.add_trace(go.Scatter(x=df['date'], y=df['MACD'], name='MACD', line=dict(color='blue')))
-                macd_fig.add_trace(go.Scatter(x=df['date'], y=df['MACD_signal'], name='Signal', line=dict(color='orange')))
-                macd_fig.add_trace(go.Bar(x=df['date'], y=df['MACD_hist'], name='Histogram'))
-                macd_fig.update_layout(height=400, margin=dict(t=10, b=10))
+                macd_fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot['MACD'], name='MACD', line=dict(color='blue')))
+                macd_fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot['MACD_signal'], name='Signal', line=dict(color='orange')))
+                macd_fig.add_trace(go.Bar(x=df_plot['date'], y=df_plot['MACD_hist'], name='Histogram'))
+                macd_fig.update_layout(height=400, margin=dict(t=10, b=10), hovermode='x unified')
                 st.plotly_chart(macd_fig, use_container_width=True)
             except Exception as e:
                 st.error(f"❌ MACD 图绘制失败：{e}")
 
-        # TAB3: RSI 图
         with chart_tab[2]:
             try:
                 rsi_fig = go.Figure()
-                rsi_fig.add_trace(go.Scatter(x=df['date'], y=df['RSI'], name='RSI', line=dict(color='purple')))
-                rsi_fig.add_shape(type="line", x0=df['date'].iloc[0], x1=df['date'].iloc[-1], y0=70, y1=70, line=dict(color="red", dash="dash"))
-                rsi_fig.add_shape(type="line", x0=df['date'].iloc[0], x1=df['date'].iloc[-1], y0=30, y1=30, line=dict(color="green", dash="dash"))
-                rsi_fig.update_layout(height=400, margin=dict(t=10, b=10))
+                rsi_fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot['RSI'], name='RSI', line=dict(color='purple')))
+                rsi_fig.add_shape(type="line", x0=df_plot['date'].iloc[0], x1=df_plot['date'].iloc[-1], y0=70, y1=70,
+                                  line=dict(color="red", dash="dash"))
+                rsi_fig.add_shape(type="line", x0=df_plot['date'].iloc[0], x1=df_plot['date'].iloc[-1], y0=30, y1=30,
+                                  line=dict(color="green", dash="dash"))
+                rsi_fig.update_layout(height=400, margin=dict(t=10, b=10), hovermode='x unified')
                 st.plotly_chart(rsi_fig, use_container_width=True)
             except Exception as e:
                 st.error(f"❌ RSI 图绘制失败：{e}")
 
-        # ✅ 策略回测结果展示
+        with chart_tab[3]:
+            try:
+                vol_fig = go.Figure()
+                vol_fig.add_trace(go.Bar(x=df_plot['date'], y=df_plot['volume'], name='成交量', marker_color='lightblue'))
+                vol_fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot['volume'].rolling(5).mean(), name='5日均量', line=dict(color='orange')))
+                vol_fig.update_layout(height=400, margin=dict(t=10, b=10), hovermode='x unified')
+                st.plotly_chart(vol_fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ 成交量图绘制失败：{e}")
+
         st.subheader("📈 策略信号回测结果")
         backtest_result = backtest_signals(df, hold_days=5)
         st.write(f"买入信号样本数: {backtest_result['样本数']}")
-        st.write(f"平均 {5} 日涨幅: {backtest_result['平均涨幅']}%")
+        st.write(f"平均 5 日涨幅: {backtest_result['平均涨幅']}%")
         st.write(f"胜率: {backtest_result['胜率']}%")
 
-        # ✅ GPT 策略建议展示（放在最后）
         st.subheader("🧠 ChatGPT 策略建议")
         suggestion = explain_by_gpt(stock_code, last_row)
         st.markdown(suggestion)
-
 else:
     st.info("请输入6位股票代码，例如 000001 或 600519")
