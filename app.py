@@ -117,37 +117,37 @@ if stock_code:
             st.stop()
 
         df = analyze_tech(df)
-        df_plot = df[df['date'] > df['date'].max() - pd.Timedelta(days=90)]  # 默认仅绘图近90日
         last_row = df.iloc[-1]
 
-        st.subheader("📊 最近行情与技术指标")
-        st.dataframe(df.tail(10)[['date', 'close', 'MACD', 'MACD_signal', 'RSI']].set_index('date'), use_container_width=True, height=300)
-
+        # ✅ 图表数据滑块
         st.subheader("📉 图表分析展示")
-        chart_tab = st.tabs(["K线+均线+BOLL+信号", "MACD", "RSI", "成交量"])
+        max_days = len(df)
+        default_days = min(90, max_days)
+        window = st.slider("请选择图表展示周期（天数）:", min_value=30, max_value=max_days, value=default_days, step=10)
+        df_plot = df[df['date'] > df['date'].max() - pd.Timedelta(days=window)]
+
+        chart_tab = st.tabs(["K线图", "MACD", "RSI", "成交量"])
 
         with chart_tab[0]:
             try:
                 fig = make_subplots(rows=1, cols=1)
                 fig.add_trace(go.Candlestick(x=df_plot['date'], open=df_plot['open'], high=df_plot['high'],
-                                             low=df_plot['low'], close=df_plot['close'], name='K线'), row=1, col=1)
+                                             low=df_plot['low'], close=df_plot['close'], name='K线'))
                 for ma, color in zip(['MA5', 'MA10', 'MA20'], ['blue', 'orange', 'green']):
                     if ma in df_plot.columns:
                         fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot[ma], mode='lines', name=ma,
-                                                 line=dict(color=color)), row=1, col=1)
+                                                 line=dict(color=color)))
                 for boll, color in zip(['BOLL_U', 'BOLL_M', 'BOLL_L'], ['red', 'gray', 'red']):
                     if boll in df_plot.columns:
                         fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot[boll], mode='lines', name=boll,
-                                                 line=dict(color=color, dash='dot')), row=1, col=1)
-
+                                                 line=dict(color=color, dash='dot')))
                 fig.add_trace(go.Scatter(x=df_plot[df_plot['buy_signal']]['date'],
                                          y=df_plot[df_plot['buy_signal']]['close'], mode='markers', name='买入信号',
-                                         marker=dict(color='green', size=10, symbol='triangle-up')), row=1, col=1)
+                                         marker=dict(color='green', size=10, symbol='triangle-up')))
                 fig.add_trace(go.Scatter(x=df_plot[df_plot['sell_signal']]['date'],
                                          y=df_plot[df_plot['sell_signal']]['close'], mode='markers', name='卖出信号',
-                                         marker=dict(color='red', size=10, symbol='triangle-down')), row=1, col=1)
-
-                fig.update_layout(height=600, margin=dict(t=10, b=10), hovermode='x unified', xaxis_rangeslider_visible=True)
+                                         marker=dict(color='red', size=10, symbol='triangle-down')))
+                fig.update_layout(height=600, hovermode='x unified', xaxis_rangeslider_visible=True)
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
                 st.error(f"❌ K线图绘制失败：{e}")
@@ -158,7 +158,7 @@ if stock_code:
                 macd_fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot['MACD'], name='MACD', line=dict(color='blue')))
                 macd_fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot['MACD_signal'], name='Signal', line=dict(color='orange')))
                 macd_fig.add_trace(go.Bar(x=df_plot['date'], y=df_plot['MACD_hist'], name='Histogram'))
-                macd_fig.update_layout(height=400, margin=dict(t=10, b=10), hovermode='x unified')
+                macd_fig.update_layout(height=400, hovermode='x unified')
                 st.plotly_chart(macd_fig, use_container_width=True)
             except Exception as e:
                 st.error(f"❌ MACD 图绘制失败：{e}")
@@ -171,7 +171,7 @@ if stock_code:
                                   line=dict(color="red", dash="dash"))
                 rsi_fig.add_shape(type="line", x0=df_plot['date'].iloc[0], x1=df_plot['date'].iloc[-1], y0=30, y1=30,
                                   line=dict(color="green", dash="dash"))
-                rsi_fig.update_layout(height=400, margin=dict(t=10, b=10), hovermode='x unified')
+                rsi_fig.update_layout(height=400, hovermode='x unified')
                 st.plotly_chart(rsi_fig, use_container_width=True)
             except Exception as e:
                 st.error(f"❌ RSI 图绘制失败：{e}")
@@ -181,7 +181,7 @@ if stock_code:
                 vol_fig = go.Figure()
                 vol_fig.add_trace(go.Bar(x=df_plot['date'], y=df_plot['volume'], name='成交量', marker_color='lightblue'))
                 vol_fig.add_trace(go.Scatter(x=df_plot['date'], y=df_plot['volume'].rolling(5).mean(), name='5日均量', line=dict(color='orange')))
-                vol_fig.update_layout(height=400, margin=dict(t=10, b=10), hovermode='x unified')
+                vol_fig.update_layout(height=400, hovermode='x unified')
                 st.plotly_chart(vol_fig, use_container_width=True)
             except Exception as e:
                 st.error(f"❌ 成交量图绘制失败：{e}")
