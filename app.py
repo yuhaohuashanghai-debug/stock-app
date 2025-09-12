@@ -217,7 +217,7 @@ if st.button("分析股票"):
         report = ai_analysis(code, df, signals)
         st.write(report)
 
-                      # --- 策略回测（form + session_state + 锚点跳转） ---
+        # --- 策略回测（form + session_state + 自动跳转锚点） ---
         st.subheader("📊 策略回测：MACD 金叉/死叉")
 
         with st.form("backtest_form"):
@@ -234,13 +234,26 @@ if st.button("分析股票"):
             st.session_state["backtest_trades"] = trades
             st.session_state["lookback"] = lookback
             st.session_state["holding_days"] = holding_days
-            # 提交后设置 URL 参数，刷新后会跳到锚点
             st.experimental_set_query_params(section="backtest")
 
         # 🚀 提交后刷新也能显示结果
         if "backtest_results" in st.session_state:
-            # 定义一个锚点
             st.markdown("<a name='backtest'></a>", unsafe_allow_html=True)
+
+            # 如果 URL 参数要求跳转，则自动滚动
+            params = st.experimental_get_query_params()
+            if params.get("section", [""])[0] == "backtest":
+                st.markdown(
+                    """
+                    <script>
+                    var element = document.getElementsByName("backtest")[0];
+                    if (element) {
+                        element.scrollIntoView({behavior: "smooth", block: "start"});
+                    }
+                    </script>
+                    """,
+                    unsafe_allow_html=True
+                )
 
             results = st.session_state["backtest_results"]
             trades = st.session_state["backtest_trades"]
@@ -267,5 +280,3 @@ if st.button("分析股票"):
                 )
             else:
                 st.info("⚠️ 最近没有检测到有效的 MACD 金叉/死叉信号，无法回测。")
-
-
