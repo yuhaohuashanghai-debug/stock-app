@@ -217,8 +217,9 @@ if st.button("分析股票"):
         report = ai_analysis(code, df, signals)
         st.write(report)
 
-        # 策略回测（form 提交版）
+               # --- 策略回测（form + session_state 保存结果） ---
         st.subheader("📊 策略回测：MACD 金叉/死叉")
+
         with st.form("backtest_form"):
             col1, col2 = st.columns(2)
             with col1:
@@ -229,6 +230,18 @@ if st.button("分析股票"):
 
         if submitted:
             results, trades = backtest_macd(df, lookback=lookback, holding_days=holding_days)
+            st.session_state["backtest_results"] = results
+            st.session_state["backtest_trades"] = trades
+            st.session_state["lookback"] = lookback
+            st.session_state["holding_days"] = holding_days
+
+        # 🚀 表单提交后刷新也能显示结果
+        if "backtest_results" in st.session_state:
+            results = st.session_state["backtest_results"]
+            trades = st.session_state["backtest_trades"]
+            lookback = st.session_state["lookback"]
+            holding_days = st.session_state["holding_days"]
+
             st.write(f"过去 {lookback} 天内：")
             st.write(f"- MACD 金叉次数: {results['金叉']['次数']}，{holding_days}日后上涨胜率: {results['金叉']['胜率']:.2%}")
             st.write(f"- MACD 死叉次数: {results['死叉']['次数']}，{holding_days}日后下跌胜率: {results['死叉']['胜率']:.2%}")
@@ -240,3 +253,4 @@ if st.button("分析股票"):
                 st.dataframe(trade_df.tail(5))
             else:
                 st.info("⚠️ 最近没有检测到有效的 MACD 金叉/死叉信号，无法回测。")
+
