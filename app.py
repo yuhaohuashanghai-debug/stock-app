@@ -12,7 +12,8 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 st.set_page_config(page_title="📊 A股策略分析", layout="wide")
 st.title("📈 基于 AkShare + ChatGPT 的 A股技术分析与趋势预测")
 
-# ✅ 获取行情数据函数
+
+# --- 获取行情数据 ---
 @st.cache_data(ttl=3600)
 def fetch_data(code: str, start_date="20220101"):
     try:
@@ -28,37 +29,29 @@ def fetch_data(code: str, start_date="20220101"):
         st.error(f"获取数据失败: {e}")
         return pd.DataFrame()
 
-# ✅ 技术指标计算
+
+# --- 技术指标计算 ---
 def add_indicators(df):
-    # 移动均线
     df["MA5"] = ta.sma(df["close"], length=5)
     df["MA10"] = ta.sma(df["close"], length=10)
     df["MA20"] = ta.sma(df["close"], length=20)
 
-    # MACD
     macd = ta.macd(df["close"])
     if macd is not None and not macd.empty:
-        df["MACD"] = macd.get("MACD_12_26_9", 0)
-        df["MACD_H"] = macd.get("MACDh_12_26_9", 0)
-        df["MACD_S"] = macd.get("MACDs_12_26_9", 0)
+        df["MACD"] = macd.get("MACD_12_26_9", None)
+        df["MACD_H"] = macd.get("MACDh_12_26_9", None)
+        df["MACD_S"] = macd.get("MACDs_12_26_9", None)
     else:
         df["MACD"], df["MACD_H"], df["MACD_S"] = None, None, None
 
-    # RSI
     rsi = ta.rsi(df["close"], length=14)
-    if rsi is not None and not rsi.empty:
-        df["RSI"] = rsi
-    else:
-        df["RSI"] = None
+    df["RSI"] = rsi if rsi is not None and not rsi.empty else None
 
-    # BOLL（布林带）
     boll = ta.bbands(df["close"], length=20, std=2)
     if boll is not None and not boll.empty:
-        # 动态查找列名，防止版本差异
         up_col = next((c for c in boll.columns if "BBU" in c), None)
         mid_col = next((c for c in boll.columns if "BBM" in c), None)
         low_col = next((c for c in boll.columns if "BBL" in c), None)
-
         df["BOLL_UP"] = boll[up_col] if up_col else None
         df["BOLL_MID"] = boll[mid_col] if mid_col else None
         df["BOLL_LOW"] = boll[low_col] if low_col else None
@@ -68,11 +61,12 @@ def add_indicators(df):
     return df
 
 
+# --- 趋势预测 ---
 def predict_trend(df):
     latest = df.iloc[-1]
     signals = []
 
-    # --- MACD 判断 ---
+    # MACD
     try:
         if pd.notna(latest["MACD"]) and pd.notna(latest["MACD_S"]):
             if latest["MACD"] > latest["MACD_S"]:
@@ -84,7 +78,7 @@ def predict_trend(df):
     except Exception:
         signals.append("⚠️ MACD 计算失败")
 
-    # --- RSI 判断 ---
+    # RSI
     try:
         if pd.notna(latest["RSI"]):
             if latest["RSI"] < 30:
@@ -98,7 +92,7 @@ def predict_trend(df):
     except Exception:
         signals.append("⚠️ RSI 计算失败")
 
-    # --- BOLL 判断 ---
+    # BOLL
     try:
         if pd.notna(latest["BOLL_UP"]) and pd.notna(latest["BOLL_LOW"]):
             if latest["close"] > latest["BOLL_UP"]:
@@ -114,7 +108,51 @@ def predict_trend(df):
 
     return signals
 
-# ✅ ChatGPT 解读模块
+
+# --- 策略回测 ---
+def backtest_macd(df, lookback=90, holding_days=5):
+    results = {"金叉": {"次数": 0, "胜率": 0}, "死叉": {"次数": 0, "胜率": 0}}
+    trades = []
+
+    if "MACD" not in df.columns or "MACD_S" not in df.columns:
+        return results, trades
+
+    df = df.dropna().reset_index(drop=True)
+    df = df.iloc[-lookback:]
+
+    for i in range(1, len(df) - holding_days):
+        today = df.iloc[i]
+        yesterday = df.iloc[i - 1]
+
+        # 金叉
+        if yesterday["MACD"] <= yesterday["MACD_S"] and today["MACD"] > today["MACD_S"]:
+            entry_price = today["close"]
+            exit_price = df.iloc[i + holding_days]["close"]
+            ret = (exit_price - entry_price) / entry_price
+            trades.append(("金叉", today["date"], entry_price, exit_price, ret))
+            results["金叉"]["次数"] += 1
+            if ret > 0:
+                results["金叉"]["胜率"] += 1
+
+        # 死叉
+        if yesterday["MACD"] >= yesterday["MACD_S"] and today["MACD"] < today["MACD_S"]:
+            entry_price = today["close"]
+            exit_price = df.iloc[i + holding_days]["close"]
+            ret = (exit_price - entry_price) / entry_price
+            trades.append(("死叉", today["date"], entry_price, exit_price, ret))
+            results["死叉"]["次数"] += 1
+            if ret < 0:
+                results["死叉"]["胜率"] += 1
+
+    if results["金叉"]["次数"] > 0:
+        results["金叉"]["胜率"] = results["金叉"]["胜率"] / results["金叉"]["次数"]
+    if results["死叉"]["次数"] > 0:
+        results["死叉"]["胜率"] = results["死叉"]["胜率"] / results["死叉"]["次数"]
+
+    return results, trades
+
+
+# --- ChatGPT 投资解读 ---
 def ai_analysis(code, df, signals):
     latest = df.iloc[-1]
     prompt = f"""
@@ -123,9 +161,9 @@ def ai_analysis(code, df, signals):
 日期: {latest['date'].strftime('%Y-%m-%d')}
 收盘价: {latest['close']}
 MA5: {latest['MA5']:.2f}, MA10: {latest['MA10']:.2f}, MA20: {latest['MA20']:.2f}
-MACD: {latest['MACD']:.2f}, Signal: {latest['MACD_S']:.2f}
-RSI: {latest['RSI']:.2f}
-BOLL: 上轨 {latest['BOLL_UP']:.2f}, 中轨 {latest['BOLL_MID']:.2f}, 下轨 {latest['BOLL_LOW']:.2f}
+MACD: {latest['MACD']}, Signal: {latest['MACD_S']}
+RSI: {latest['RSI']}
+BOLL: 上轨 {latest['BOLL_UP']}, 中轨 {latest['BOLL_MID']}, 下轨 {latest['BOLL_LOW']}
 信号总结: {"; ".join(signals)}
 要求：语言专业、简洁，面向投资者，不要超过300字。
     """
@@ -141,23 +179,25 @@ BOLL: 上轨 {latest['BOLL_UP']:.2f}, 中轨 {latest['BOLL_MID']:.2f}, 下轨 {l
     except Exception as e:
         return f"⚠️ ChatGPT 分析失败: {e}"
 
-# ✅ 页面交互
+
+# --- 页面交互 ---
 code = st.text_input("请输入6位股票代码", value="000001")
+
 if st.button("分析股票"):
     df = fetch_data(code)
     if not df.empty:
         df = add_indicators(df)
 
-        # 绘图
-        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5,0.25,0.25])
+        # 绘制图表
+        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
         fig.add_trace(go.Candlestick(x=df["date"], open=df["open"], high=df["high"],
                                      low=df["low"], close=df["close"], name="K线"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["MA5"], name="MA5", line=dict(width=1)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["MA10"], name="MA10", line=dict(width=1)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["MA20"], name="MA20", line=dict(width=1)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_UP"], name="BOLL_UP", line=dict(width=1, dash="dot")), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_MID"], name="BOLL_MID", line=dict(width=1, dash="dot")), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_LOW"], name="BOLL_LOW", line=dict(width=1, dash="dot")), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MA5"], name="MA5"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MA10"], name="MA10"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MA20"], name="MA20"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_UP"], name="BOLL_UP", line=dict(dash="dot")), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_MID"], name="BOLL_MID", line=dict(dash="dot")), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_LOW"], name="BOLL_LOW", line=dict(dash="dot")), row=1, col=1)
 
         fig.add_trace(go.Bar(x=df["date"], y=df["volume"], name="成交量"), row=2, col=1)
         fig.add_trace(go.Bar(x=df["date"], y=df["MACD_H"], name="MACD柱状"), row=3, col=1)
@@ -172,7 +212,28 @@ if st.button("分析股票"):
         for s in signals:
             st.write("- " + s)
 
-        # AI 文字报告
+        # ChatGPT 投资解读
         st.subheader("📝 ChatGPT 投资解读")
         report = ai_analysis(code, df, signals)
         st.write(report)
+
+        # 策略回测
+        st.subheader("📊 策略回测：MACD 金叉/死叉")
+        col1, col2 = st.columns(2)
+        with col1:
+            lookback = st.number_input("回测天数 (lookback)", min_value=30, max_value=365, value=90, step=10)
+        with col2:
+            holding_days = st.number_input("持仓天数 (holding_days)", min_value=1, max_value=30, value=5, step=1)
+
+        results, trades = backtest_macd(df, lookback=lookback, holding_days=holding_days)
+        st.write(f"过去 {lookback} 天内：")
+        st.write(f"- MACD 金叉次数: {results['金叉']['次数']}，{holding_days}日后上涨胜率: {results['金叉']['胜率']:.2%}")
+        st.write(f"- MACD 死叉次数: {results['死叉']['次数']}，{holding_days}日后下跌胜率: {results['死叉']['胜率']:.2%}")
+
+        if trades:
+            st.write(f"最近几次交易回测记录 (持仓 {holding_days} 天)：")
+            trade_df = pd.DataFrame(trades, columns=["信号", "日期", "买入价", "卖出价", "收益率"])
+            trade_df["收益率"] = trade_df["收益率"].map(lambda x: f"{x:.2%}")
+            st.dataframe(trade_df.tail(5))
+        else:
+            st.info("⚠️ 最近没有检测到有效的 MACD 金叉/死叉信号，无法回测。")
