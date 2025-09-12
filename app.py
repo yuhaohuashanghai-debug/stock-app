@@ -1,12 +1,10 @@
-
 import streamlit as st
 import pandas as pd
 import pandas_ta as ta
 import openai
 import akshare as ak
 import plotly.graph_objects as go
-from openai import OpenAI
-from openai import RateLimitError, AuthenticationError, OpenAIError
+from openai import OpenAI, RateLimitError, AuthenticationError, OpenAIError
 
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
@@ -20,29 +18,40 @@ def fetch_ak_kline(code):
     try:
         df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date="20220101", adjust="qfq")
         df.rename(columns={"日期": "date", "收盘": "close", "开盘": "open", "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
-        df[["close", "open", "high", "low", "volume"]] = df[["close", "open", "high", "low", "volume"]].astype(float)
+        df["date"] = pd.to_datetime(df["date"])
+        df.sort_values("date", inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        df["close"] = df["close"].astype(float)
         return df
     except Exception as e:
         st.error(f"❌ AkShare 获取数据失败：{e}")
         return pd.DataFrame()
 
 def analyze_tech(df):
+    if 'close' not in df.columns or df['close'].isna().all():
+        st.error("❌ 技术指标计算失败：未找到有效的收盘价数据")
+        return df
     try:
         macd_df = ta.macd(df['close'])
-        if macd_df is not None:
-            df = pd.concat([df, macd_df], axis=1)
-            df.rename(columns={
-                'MACD_12_26_9': 'MACD',
-                'MACDs_12_26_9': 'MACD_signal',
-                'MACDh_12_26_9': 'MACD_hist'
-            }, inplace=True)
+        boll_df = ta.bbands(df['close'])
+        df = pd.concat([df, macd_df, boll_df], axis=1)
+        df.rename(columns={
+            'MACD_12_26_9': 'MACD',
+            'MACDs_12_26_9': 'MACD_signal',
+            'MACDh_12_26_9': 'MACD_hist',
+            'BBL_20_2.0': 'BOLL_L',
+            'BBM_20_2.0': 'BOLL_M',
+            'BBU_20_2.0': 'BOLL_U'
+        }, inplace=True)
         df['RSI'] = ta.rsi(df['close'])
-        df[['MA5', 'MA20', 'MA60']] = df['close'].rolling(5), df['close'].rolling(20), df['close'].rolling(60)
-        bbands = ta.bbands(df['close'])
-        df = pd.concat([df, bbands], axis=1)
+        df['MA5'] = ta.sma(df['close'], length=5)
+        df['MA10'] = ta.sma(df['close'], length=10)
+        df['MA20'] = ta.sma(df['close'], length=20)
+        # 买卖点标注（金叉）
+        df['buy_signal'] = (df['MACD'] > df['MACD_signal']) & (df['MACD'].shift(1) <= df['MACD_signal'].shift(1))
+        df['sell_signal'] = (df['MACD'] < df['MACD_signal']) & (df['MACD'].shift(1) >= df['MACD_signal'].shift(1))
     except Exception as e:
-        st.error(f"❌ 技术指标计算失败：{e}")
+        st.error(f"❌ 技术指标计算异常：{e}")
     return df
 
 def explain_by_gpt(stock_code, row):
@@ -86,32 +95,34 @@ if stock_code:
         st.subheader("📊 最近行情与技术指标")
         st.dataframe(df.tail(5)[['date', 'close', 'MACD', 'MACD_signal', 'RSI']].set_index('date'))
 
-        # 📊 多图分页可视化模块
-        tab1, tab2, tab3 = st.tabs(["K线 + 均线 + BOLL", "MACD", "RSI"])
+        st.subheader("📉 图表分析展示")
+        tab1, tab2, tab3 = st.tabs(["K线+均线+BOLL", "MACD", "RSI"])
 
         with tab1:
             fig = go.Figure()
-            fig.add_trace(go.Candlestick(x=df['date'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name="K线"))
-            fig.add_trace(go.Scatter(x=df['date'], y=df['MA5'], name='MA5'))
-            fig.add_trace(go.Scatter(x=df['date'], y=df['MA20'], name='MA20'))
-            fig.add_trace(go.Scatter(x=df['date'], y=df['MA60'], name='MA60'))
-            fig.add_trace(go.Scatter(x=df['date'], y=df['BBL_5_2.0'], name='BOLL下轨', line=dict(dash='dot')))
-            fig.add_trace(go.Scatter(x=df['date'], y=df['BBM_5_2.0'], name='BOLL中轨', line=dict(dash='dot')))
-            fig.add_trace(go.Scatter(x=df['date'], y=df['BBU_5_2.0'], name='BOLL上轨', line=dict(dash='dot')))
+            fig.add_trace(go.Candlestick(x=df['date'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='K线'))
+            fig.add_trace(go.Scatter(x=df['date'], y=df['MA5'], mode='lines', name='MA5'))
+            fig.add_trace(go.Scatter(x=df['date'], y=df['MA10'], mode='lines', name='MA10'))
+            fig.add_trace(go.Scatter(x=df['date'], y=df['MA20'], mode='lines', name='MA20'))
+            fig.add_trace(go.Scatter(x=df['date'], y=df['BOLL_U'], mode='lines', name='BOLL上轨'))
+            fig.add_trace(go.Scatter(x=df['date'], y=df['BOLL_M'], mode='lines', name='BOLL中轨'))
+            fig.add_trace(go.Scatter(x=df['date'], y=df['BOLL_L'], mode='lines', name='BOLL下轨'))
+            fig.add_trace(go.Scatter(x=df[df['buy_signal']]['date'], y=df[df['buy_signal']]['close'], mode='markers', marker=dict(symbol='triangle-up', color='green', size=10), name='买入点'))
+            fig.add_trace(go.Scatter(x=df[df['sell_signal']]['date'], y=df[df['sell_signal']]['close'], mode='markers', marker=dict(symbol='triangle-down', color='red', size=10), name='卖出点'))
             st.plotly_chart(fig, use_container_width=True)
 
         with tab2:
             macd_fig = go.Figure()
             macd_fig.add_trace(go.Scatter(x=df['date'], y=df['MACD'], name='MACD', line=dict(color='blue')))
             macd_fig.add_trace(go.Scatter(x=df['date'], y=df['MACD_signal'], name='Signal', line=dict(color='orange')))
-            macd_fig.add_trace(go.Bar(x=df['date'], y=df['MACD_hist'], name='Hist'))
+            macd_fig.add_trace(go.Bar(x=df['date'], y=df['MACD_hist'], name='Histogram'))
             st.plotly_chart(macd_fig, use_container_width=True)
 
         with tab3:
             rsi_fig = go.Figure()
-            rsi_fig.add_trace(go.Scatter(x=df['date'], y=df['RSI'], name='RSI 指标'))
-            rsi_fig.add_hline(y=70, line=dict(dash='dash', color='red'))
-            rsi_fig.add_hline(y=30, line=dict(dash='dash', color='green'))
+            rsi_fig.add_trace(go.Scatter(x=df['date'], y=df['RSI'], name='RSI'))
+            rsi_fig.add_hline(y=70, line_dash='dash', line_color='red')
+            rsi_fig.add_hline(y=30, line_dash='dash', line_color='green')
             st.plotly_chart(rsi_fig, use_container_width=True)
 
         st.subheader("🧠 ChatGPT 策略建议")
