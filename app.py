@@ -101,12 +101,6 @@ def analyze_tech(df):
         # RSI 图
         st.subheader("📉 RSI 指标图")
         # ...
-
-        # ChatGPT 建议
-        st.subheader("🧠 ChatGPT 策略建议")
-        suggestion = explain_by_gpt(stock_code, last_row)
-        st.markdown(suggestion)
-
 else:
     st.info("请输入6位股票代码，例如 000001 或 600519")
 
