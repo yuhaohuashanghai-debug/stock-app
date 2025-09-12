@@ -52,7 +52,16 @@ def analyze_tech(df):
         st.error(f"❌ RSI 计算异常：{e}")
     return df
 
- st.subheader("📊 趋势图")
+ if stock_code:
+    with st.spinner("正在获取数据和分析中..."):
+        df = fetch_ak_kline(stock_code)
+        if df.empty:
+            st.stop()
+
+        df = analyze_tech(df)
+        last_row = df.iloc[-1]
+
+        st.subheader("📊 最近行情与技术指标")
         st.dataframe(df.tail(5)[['date', 'close', 'MACD', 'MACD_signal', 'RSI']].set_index('date'))
 
         # ✅ 插入图表（要保证在 if 块内部）
@@ -92,6 +101,14 @@ def analyze_tech(df):
         # RSI 图
         st.subheader("📉 RSI 指标图")
         # ...
+
+        # ChatGPT 建议
+        st.subheader("🧠 ChatGPT 策略建议")
+        suggestion = explain_by_gpt(stock_code, last_row)
+        st.markdown(suggestion)
+
+else:
+    st.info("请输入6位股票代码，例如 000001 或 600519")
 
 from openai import OpenAI
 from openai import RateLimitError, AuthenticationError, OpenAIError
