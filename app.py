@@ -4,6 +4,7 @@ import pandas_ta as ta
 import akshare as ak
 import plotly.graph_objects as go
 from datetime import datetime
+import time
 
 st.set_page_config(page_title="A股批量分析 & AI趋势预测", layout="wide")
 st.title("📈 A股批量智能技术分析 & AI趋势预测")
@@ -13,7 +14,6 @@ tab1, tab2 = st.tabs(["🪄 全市场自动选股信号", "个股批量分析+AI
 # =============== TAB 1：全A股/ETF/板块自动选股 ===============
 with tab1:
     st.subheader("全市场池自动加载+多策略选股信号检测")
-    # --- 选股池选择 ---
     @st.cache_data
     def get_all_a_codes():
         stock_df = ak.stock_info_a_code_name()
@@ -42,6 +42,7 @@ with tab1:
         except:
             return []
 
+    # ======= 选股池
     market_pool = st.selectbox(
         "选择批量选股池",
         options=["全A股", "全ETF", "沪深300", "科创50", "热门概念板块", "自定义"],
@@ -76,7 +77,11 @@ with tab1:
     st.info(f"本次选股池共计 {len(codes)} 只标的。")
     start_date = st.date_input("起始日期", value=pd.to_datetime("2024-01-01"), key="pick_start")
     btn = st.button("一键批量自动选股", key="btn_pick")
+    openai_key = st.text_input("如需AI批量趋势点评，请输入OpenAI KEY", type="password", key="tab1_ai_key")
+    ai_batch = st.toggle("批量AI智能点评", value=True, key="ai_batch_tab1")
+    trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1, key="tab1_trend_days")
 
+    # ====== 数据处理和信号判别
     def fetch_ak_data(code, start_date):
         df = pd.DataFrame()
         try:
@@ -123,8 +128,6 @@ with tab1:
         signals = []
         latest = df.iloc[-1]
         pre = df.iloc[-2] if len(df) >= 2 else latest
-
-        # 1. 均线金叉
         if "SMA_5" in df.columns and "SMA_10" in df.columns:
             if pre["SMA_5"] < pre["SMA_10"] and latest["SMA_5"] > latest["SMA_10"]:
                 signals.append("5日均线金叉10日均线")
@@ -133,8 +136,6 @@ with tab1:
                 explain.append(f"【均线金叉】：5日均线({latest['SMA_5']:.2f}) {'>' if latest['SMA_5']>latest['SMA_10'] else '<='} 10日均线({latest['SMA_10']:.2f})，未发生金叉。")
         else:
             explain.append("【均线金叉】：数据不足，无法判断。")
-
-        # 2. MACD金叉
         if "MACD" in df.columns and "MACDs" in df.columns:
             if pre["MACD"] < pre["MACDs"] and latest["MACD"] > latest["MACDs"]:
                 signals.append("MACD金叉")
@@ -143,8 +144,6 @@ with tab1:
                 explain.append(f"【MACD金叉】：MACD({latest['MACD']:.3f}) {'>' if latest['MACD']>latest['MACDs'] else '<='} 信号线({latest['MACDs']:.3f})，未发生金叉。")
         else:
             explain.append("【MACD金叉】：数据不足，无法判断。")
-
-        # 3. RSI超卖反弹
         if "RSI_6" in df.columns:
             if latest["RSI_6"] < 30 and pre["RSI_6"] >= 30:
                 signals.append("RSI6超卖反弹")
@@ -153,8 +152,6 @@ with tab1:
                 explain.append(f"【RSI超卖反弹】：RSI6当前为{latest['RSI_6']:.1f}，未触发超卖反弹。")
         else:
             explain.append("【RSI超卖反弹】：数据不足，无法判断。")
-
-        # 4. 放量突破
         if "volume" in df.columns and "close" in df.columns and len(df) >= 6:
             pre_vol = df["volume"].iloc[-6:-1].mean()
             vol_up = latest["volume"] > 1.5 * pre_vol
@@ -166,8 +163,6 @@ with tab1:
                 explain.append(f"【放量突破】：今日成交量{latest['volume']}，均量{pre_vol:.0f}，{'放量' if vol_up else '未放量'}，涨幅{pct_chg:.2f}%。")
         else:
             explain.append("【放量突破】：数据不足，无法判断。")
-
-        # 5. 20日新高
         if "close" in df.columns and len(df) >= 20:
             if latest["close"] >= df["close"].iloc[-20:].max():
                 signals.append("20日新高")
@@ -176,8 +171,6 @@ with tab1:
                 explain.append(f"【20日新高】：今日收盘{latest['close']}，20日最高{df['close'].iloc[-20:].max()}，未创新高。")
         else:
             explain.append("【20日新高】：数据不足，无法判断。")
-
-        # 6. 20日新低
         if "close" in df.columns and len(df) >= 20:
             if latest["close"] <= df["close"].iloc[-20:].min():
                 signals.append("20日新低")
@@ -186,44 +179,79 @@ with tab1:
                 explain.append(f"【20日新低】：今日收盘{latest['close']}，20日最低{df['close'].iloc[-20:].min()}，未创新低。")
         else:
             explain.append("【20日新低】：数据不足，无法判断。")
-
         return signals, explain
 
+    # ===== AI趋势点评 Prompt（核心）
+    def ai_trend_report(df, code, trend_days, openai_key):
+        if not openai_key:
+            return ""
+        use_df = df.tail(60)[["date", "open", "close", "high", "low", "volume"]]
+        data_str = use_df.to_csv(index=False)
+        prompt = f"""
+你是一位A股专业量化分析师。以下是{code}最近60日的每日行情（日期,开盘,收盘,最高,最低,成交量），请根据技术走势、成交量变化，预测该股未来{trend_days}日的涨跌趋势，并判断是否存在启动信号、买卖机会，请以精炼中文输出一份点评。数据如下（csv格式）：
+{data_str}
+"""
+        try:
+            import openai
+            client = openai.OpenAI(api_key=openai_key)
+            chat_completion = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "你是一位专业A股分析师。"},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=400,
+                temperature=0.6,
+            )
+            return chat_completion.choices[0].message.content
+        except Exception as ex:
+            return f"AI分析调用失败：{ex}"
+
+    # ====== 主批量自动化
     if btn:
         st.info(f"开始批量检测，请耐心等待（建议每次选股池不超过200只，太多易超时）")
         result_table = []
+        ai_table = []
         for i, code in enumerate(codes):
             df = fetch_ak_data(code, start_date)
             if df.empty or len(df) < 25:
                 continue
             df = calc_indicators(df)
             signals, explain = signal_with_explain(df)
+            ai_result = ""
+            if ai_batch and openai_key and signals:  # 只为入选标的生成AI点评，节省token
+                ai_result = ai_trend_report(df, code, trend_days, openai_key)
+                time.sleep(1.2)  # 限流防止超速
             result_table.append({
                 "代码": code,
                 "信号": "、".join(signals) if signals else "无明显信号",
-                "明细解释": "\n".join(explain)
+                "明细解释": "\n".join(explain),
+                "AI点评": ai_result
             })
-            if i < 10:
+            if i < 6:  # 展示部分进度
                 st.markdown(f"#### 【{code}】选股信号：{'、'.join(signals) if signals else '无明显信号'}")
                 with st.expander("信号检测明细（点击展开）", expanded=False):
                     for line in explain:
                         st.write(line)
+                if ai_result:
+                    st.info(f"AI点评：{ai_result}")
+
         selected = [r for r in result_table if "无明显信号" not in r["信号"]]
         if selected:
-            st.subheader("✅ 入选标的与信号（可全部导出）")
+            st.subheader("✅ 入选标的与信号（可全部导出，含AI点评）")
             df_sel = pd.DataFrame(selected)
-            st.dataframe(df_sel[["代码","信号"]])
+            st.dataframe(df_sel[["代码","信号", "AI点评"]])
             st.download_button(
                 "导出全部明细为Excel",
                 data=pd.DataFrame(result_table).to_excel(index=False),
-                file_name="选股明细.xlsx"
+                file_name="AI选股明细.xlsx"
             )
         else:
             st.warning("暂无标的触发选股信号，可调整策略或换池。")
     else:
-        st.markdown("> 支持全A股、ETF、指数成分、热门池一键批量自动选股+明细解释，结果可导出。")
+        st.markdown("> 支持全A股、ETF、指数成分、热门池一键批量自动选股+AI趋势点评，结果可导出。")
 
-# =============== TAB 2：原有批量分析&AI趋势点评 ===============
+# =============== TAB 2 原有批量分析+AI点评，结构不变 ===============
 with tab2:
     st.subheader("自定义股票池批量分析+AI智能点评")
     openai_key = st.text_input("请输入你的OpenAI API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
