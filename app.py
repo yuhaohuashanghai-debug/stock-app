@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import pandas_ta as ta
 import akshare as ak
 import plotly.graph_objects as go
 from datetime import datetime
@@ -11,14 +10,12 @@ import io
 st.set_page_config(page_title="A股批量智能技术分析 & AI趋势预测", layout="wide")
 st.title("📈 A股批量AI自动选股 & 智能趋势点评")
 
-# 1. 指数成分股接口兼容多字段
+# ====== 数据源接口兼容层 ======
 @st.cache_data(show_spinner=False)
 def get_index_codes(index_code):
-    """
-    拉取指数成分股列表，兼容字段新旧版本
-    """
+    """拉取指数成分股列表，兼容字段新旧版本"""
     try:
-        df = ak.index_stock_cons(symbol=index_code)  # 关键点：必须用symbol参数
+        df = ak.index_stock_cons(symbol=index_code)
         if "con_code" in df.columns:
             return df["con_code"].tolist()
         elif "成分券代码" in df.columns:
@@ -30,9 +27,9 @@ def get_index_codes(index_code):
         st.warning(f"拉取指数成分股失败: {e}")
         return []
 
-# 2. ETF池拉取
 @st.cache_data(show_spinner=False)
 def get_all_etf_codes():
+    """拉取所有ETF代码"""
     try:
         etf_df = ak.fund_etf_category_sina(symbol="ETF基金")
         if "symbol" in etf_df.columns:
@@ -46,12 +43,9 @@ def get_all_etf_codes():
         st.warning(f"ETF拉取失败: {e}")
         return []
 
-# 3. 全A股（不含沪深300、科创50）
 @st.cache_data(show_spinner=False)
 def get_all_a_codes_exclude_indexes():
-    """
-    拉取A股全市场代码，并自动剔除沪深300、科创50成分股（如你需要）
-    """
+    """拉取A股全市场代码，并自动剔除沪深300、科创50成分股"""
     try:
         all_a = ak.stock_info_a_code_name()["code"].tolist()
         hs300 = set(get_index_codes("000300"))
@@ -62,12 +56,11 @@ def get_all_a_codes_exclude_indexes():
         st.warning(f"A股拉取失败: {e}")
         return []
 
-# 4. 热门概念板块拉取兼容
 @st.cache_data(ttl=300, show_spinner=False)
 def get_hot_concept_boards(topn=20):
+    """拉取热门概念板块排行，字段兼容"""
     try:
         df = ak.stock_board_concept_name_ths()
-        # 字段自动识别（兼容旧的“概念名称”和“涨幅”）
         name_col = "板块名称" if "板块名称" in df.columns else ("概念名称" if "概念名称" in df.columns else None)
         pct_col = "涨跌幅" if "涨跌幅" in df.columns else ("涨幅" if "涨幅" in df.columns else None)
         if name_col and pct_col:
@@ -82,6 +75,7 @@ def get_hot_concept_boards(topn=20):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_board_stocks(board_name):
+    """拉取指定板块成分股"""
     try:
         df = ak.stock_board_concept_cons_ths(symbol=board_name)
         if "代码" in df.columns:
@@ -93,12 +87,79 @@ def get_board_stocks(board_name):
     except Exception:
         return []
 
-# ========= 数据与指标部分省略，复用你的原有逻辑 ===========
+# ========== 核心数据拉取与信号函数（需补全/替换） ==========
+def fetch_ak_data(code, start_date):
+    """A股、ETF自动判别拉K线，兼容字段变化与异常"""
+    try:
+        sdate = str(start_date).replace("-", "")
+        # ETF一般以51/15/56/588等开头，自动切换接口
+        if code.startswith(("51", "15", "56", "58")) and len(code) == 6:
+            # ETF：用新浪ETF接口
+            df = ak.fund_etf_hist_sina(symbol=code)
+            if df.empty:
+                st.warning(f"{code} ETF无历史数据")
+                return pd.DataFrame()
+            # 字段标准化
+            df.rename(columns={"date": "date", "close": "close", "open": "open",
+                               "high": "high", "low": "low", "volume": "volume"}, inplace=True)
+            # ETF接口日期是str格式
+            df["date"] = pd.to_datetime(df["date"])
+            df = df[df["date"] >= pd.to_datetime(start_date)]
+            return df
+        else:
+            # 普通A股
+            df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=sdate, adjust="qfq")
+            if df.empty:
+                st.warning(f"{code} 没有数据，可能是新股或代码错误。")
+                return pd.DataFrame()
+            # 字段兼容
+            rename_dict = {"日期": "date", "开盘": "open", "收盘": "close", "最高": "high",
+                           "最低": "low", "成交量": "volume"}
+            for k, v in rename_dict.items():
+                if k in df.columns:
+                    df.rename(columns={k: v}, inplace=True)
+            df["date"] = pd.to_datetime(df["date"])
+            return df
+    except Exception as ex:
+        st.warning(f"{code} 拉取失败: {ex}")
+        return pd.DataFrame()
 
-# fetch_ak_data, calc_indicators, signal_with_explain, ai_trend_report等函数和原来一致
-# ... 复制你的原有实现即可 ...
+# ----------- 以下两个函数你可以用自己的实现，也可用如下简单模板 -----------
+def calc_indicators(df):
+    """简单指标计算，可用pandas_ta等补充完善"""
+    df = df.copy()
+    df["SMA_5"] = df["close"].rolling(5).mean()
+    df["SMA_10"] = df["close"].rolling(10).mean()
+    df["SMA_20"] = df["close"].rolling(20).mean()
+    # MACD简单计算
+    df["EMA_12"] = df["close"].ewm(span=12).mean()
+    df["EMA_26"] = df["close"].ewm(span=26).mean()
+    df["MACD"] = df["EMA_12"] - df["EMA_26"]
+    df["MACDs"] = df["MACD"].ewm(span=9).mean()
+    df["MACDh"] = df["MACD"] - df["MACDs"]
+    # RSI简单计算
+    df["RSI_6"] = ta.rsi(df["close"], length=6)
+    df["RSI_12"] = ta.rsi(df["close"], length=12)
+    return df
 
-# ========= 主界面 =========
+def signal_with_explain(df):
+    """技术面信号判别（演示版），可按需自定义增强"""
+    signals, explain = [], []
+    # MACD金叉
+    if df["MACDh"].iloc[-1] > 0 and df["MACDh"].iloc[-2] < 0:
+        signals.append("MACD金叉")
+        explain.append("MACD柱子刚刚翻红，可能出现反转上涨。")
+    # 均线多头
+    if df["SMA_5"].iloc[-1] > df["SMA_10"].iloc[-1] > df["SMA_20"].iloc[-1]:
+        signals.append("均线多头排列")
+        explain.append("短中长期均线呈多头，趋势向上。")
+    # RSI超卖
+    if df["RSI_6"].iloc[-1] < 30:
+        signals.append("RSI超卖反弹")
+        explain.append("RSI短期处于超卖区，技术反弹概率大。")
+    return signals, explain
+
+# =================== Streamlit主界面 ===================
 tab1, tab2 = st.tabs(["🪄 批量自动选股(分批)", "个股批量分析+AI点评"])
 
 with tab1:
@@ -114,10 +175,10 @@ with tab1:
         codes = get_all_a_codes_exclude_indexes()
         show_desc = "（全A股，已剔除沪深300与科创50成分股）"
     elif market_pool == "沪深300":
-        codes = get_index_member_codes("000300")
+        codes = get_index_codes("000300")
         show_desc = "（沪深300指数成分股）"
     elif market_pool == "科创50":
-        codes = get_index_member_codes("000688")
+        codes = get_index_codes("000688")
         show_desc = "（科创50指数成分股）"
     elif market_pool == "全ETF":
         codes = get_all_etf_codes()
@@ -127,7 +188,7 @@ with tab1:
         hot_boards = get_hot_concept_boards()
         if not hot_boards.empty:
             st.dataframe(hot_boards, hide_index=True, use_container_width=True)
-            selected_boards = st.multiselect("选择要检测的热门板块（可多选）", hot_boards["板块名称"].tolist())
+            selected_boards = st.multiselect("选择要检测的热门板块（可多选）", hot_boards.iloc[:,0].tolist())
             for board in selected_boards:
                 codes += get_board_stocks(board)
             show_desc = "（热门概念板块池，成分股合并）"
@@ -167,13 +228,14 @@ with tab1:
     trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1, key="tab1_trend_days")
     btn = st.button("本批次一键自动选股", key="btn_pick")
 
-    # ========= 多线程并发拉取K线 + 信号AI智能点评 =========
+    # ========== 多线程并发拉取K线 + 信号AI智能点评 ==========
     if btn and codes_this_batch:
         st.info("开始本批次数据分析…")
         result_table = []
         prog = st.progress(0, text="数据处理中…")
         def fetch_ak_data_safe(code, start_date):
             try:
+                time.sleep(0.3) # 限速，防封IP
                 df = fetch_ak_data(code, start_date)
                 return code, df
             except Exception as e:
@@ -250,7 +312,7 @@ with tab1:
     else:
         st.markdown("> 支持全A股（已剔除沪深300/科创50）、沪深300、科创50、ETF、热门板块一键分批自动选股+AI趋势点评。趋势信号股高亮输出专属板块。")
 
-# 其余Tab2同前，略。
+# ================== Tab2：个股批量分析+AI ==================
 with tab2:
     st.subheader("自定义股票池批量分析+AI智能点评")
     openai_key = st.text_input("请输入你的OpenAI API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
@@ -258,6 +320,7 @@ with tab2:
     start_date = st.date_input("选择起始日期", value=datetime.now().replace(year=2025, month=9, day=4), key="ai_date")
     ai_enable = st.toggle("启用AI趋势点评", value=True, key="ai_toggle")
     trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1, key="ai_trend_days")
+
     def plot_kline(df, code):
         fig = go.Figure()
         fig.add_trace(go.Candlestick(
@@ -265,65 +328,4 @@ with tab2:
             low=df["low"], close=df["close"], name="K线"))
         if "SMA_5" in df.columns:
             fig.add_trace(go.Scatter(x=df["date"], y=df["SMA_5"], mode='lines', name="SMA5"))
-        if "SMA_10" in df.columns:
-            fig.add_trace(go.Scatter(x=df["date"], y=df["SMA_10"], mode='lines', name="SMA10"))
-        if "SMA_20" in df.columns:
-            fig.add_trace(go.Scatter(x=df["date"], y=df["SMA_20"], mode='lines', name="SMA20"))
-        fig.update_layout(title=f"{code} K线与均线", xaxis_rangeslider_visible=False, height=400)
-        st.plotly_chart(fig, use_container_width=True)
-        if "MACD" in df.columns:
-            fig2 = go.Figure()
-            fig2.add_trace(go.Bar(x=df["date"], y=df["MACDh"], name="MACD柱"))
-            fig2.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD线"))
-            fig2.add_trace(go.Scatter(x=df["date"], y=df["MACDs"], name="信号线"))
-            fig2.update_layout(title="MACD指标", height=200)
-            st.plotly_chart(fig2, use_container_width=True)
-        if "RSI_6" in df.columns:
-            fig3 = go.Figure()
-            fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_6"], name="RSI6"))
-            fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_12"], name="RSI12"))
-            fig3.update_layout(title="RSI指标", height=200, yaxis=dict(range=[0,100]))
-            st.plotly_chart(fig3, use_container_width=True)
-    def ai_trend_report(df, code, trend_days, openai_key):
-        if not openai_key:
-            return "未填写OpenAI KEY，无法生成AI趋势预测。"
-        use_df = df.tail(60)[["date", "open", "close", "high", "low", "volume"]]
-        data_str = use_df.to_csv(index=False)
-        prompt = f"""
-你是一位A股专业量化分析师。以下是{code}最近60日的每日行情（日期,开盘,收盘,最高,最低,成交量），请根据技术走势、成交量变化，预测该股未来{trend_days}日的涨跌趋势，并判断是否存在启动信号、买卖机会，请以精炼中文输出一份点评。数据如下（csv格式）：
-{data_str}
-"""
-        try:
-            import openai
-            client = openai.OpenAI(api_key=openai_key)
-            chat_completion = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "你是一位专业A股分析师。"},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=400,
-                temperature=0.6,
-            )
-            return chat_completion.choices[0].message.content
-        except Exception as ex:
-            return f"AI分析调用失败：{ex}"
-
-    if st.button("批量分析", key="ai_btn"):
-        codes = [c.strip() for c in codes_input.split(",") if c.strip()]
-        for code in codes:
-            st.header(f"【{code}】分析")
-            df = fetch_ak_data(code, start_date)
-            if df.empty:
-                st.warning(f"{code} 数据未获取到，可能代码错误或日期过近。")
-                continue
-            df = calc_indicators(df)
-            st.dataframe(df.tail(10))
-            plot_kline(df, code)
-            if ai_enable:
-                with st.spinner(f"AI分析{code}中..."):
-                    ai_report = ai_trend_report(df, code, trend_days, openai_key)
-                    st.info(ai_report)
-            st.divider()
-    else:
-        st.markdown("> 支持多只A股代码批量技术分析+AI自动点评（如需AI预测请填写OpenAI KEY）")
+        if "SMA_10
