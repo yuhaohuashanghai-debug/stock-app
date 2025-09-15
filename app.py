@@ -6,7 +6,6 @@ import pandas_ta as ta
 import akshare as ak
 import plotly.graph_objects as go
 from datetime import datetime
-import openai
 
 st.set_page_config(page_title="A股批量分析 & AI趋势预测", layout="wide")
 st.title("📈 A股批量智能技术分析 & AI趋势预测")
@@ -18,14 +17,13 @@ start_date = st.date_input("选择起始日期", value=datetime.now().replace(ye
 ai_enable = st.toggle("启用AI趋势点评", value=True)
 trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1)
 
-# --- AkShare获取行情数据 ---
-
+# --- AkShare数据自动适配股票/ETF ---
 def fetch_ak_data(code, start_date):
     import akshare as ak
     import pandas as pd
     df = pd.DataFrame()
     try:
-        # 先尝试A股股票
+        # 先尝试A股股票接口
         df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date.strftime("%Y%m%d"), adjust="qfq")
         if not df.empty:
             df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
@@ -48,6 +46,26 @@ def fetch_ak_data(code, start_date):
     except Exception:
         pass
     return pd.DataFrame()
+
+# --- 指标计算 ---
+def calc_indicators(df):
+    import pandas_ta as ta
+    if "close" not in df.columns or len(df) < 20:
+        return df
+    try:
+        df["SMA_5"] = ta.sma(df["close"], length=5)
+        df["SMA_10"] = ta.sma(df["close"], length=10)
+        df["SMA_20"] = ta.sma(df["close"], length=20)
+        macd = ta.macd(df["close"])
+        if macd is not None and not macd.empty:
+            df["MACD"] = macd["MACD_12_26_9"]
+            df["MACDs"] = macd["MACDs_12_26_9"]
+            df["MACDh"] = macd["MACDh_12_26_9"]
+        df["RSI_6"] = ta.rsi(df["close"], length=6)
+        df["RSI_12"] = ta.rsi(df["close"], length=12)
+    except Exception as e:
+        pass
+    return df
 
 # --- 图表展示 ---
 def plot_kline(df, code):
