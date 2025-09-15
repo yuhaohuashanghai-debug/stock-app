@@ -123,6 +123,84 @@ def ai_trend_report(df, code, trend_days, openai_key):
     except Exception as ex:
         return f"AI分析调用失败：{ex}"
 
+# --- 多策略信号批量选股模块 ---
+
+def stock_signals(df):
+    """为单只股票/ETF计算所有选股信号，返回信号标注和理由"""
+    signals = []
+    latest = df.iloc[-1]
+    pre = df.iloc[-2] if len(df) >= 2 else latest
+
+    # 1. 均线金叉
+    if "SMA_5" in df.columns and "SMA_10" in df.columns:
+        if pre["SMA_5"] < pre["SMA_10"] and latest["SMA_5"] > latest["SMA_10"]:
+            signals.append("5日均线金叉10日均线")
+
+    # 2. MACD金叉
+    if "MACD" in df.columns and "MACDs" in df.columns:
+        if pre["MACD"] < pre["MACDs"] and latest["MACD"] > latest["MACDs"]:
+            signals.append("MACD金叉")
+
+    # 3. RSI超卖反弹
+    if "RSI_6" in df.columns and latest["RSI_6"] < 30 and pre["RSI_6"] >= 30:
+        signals.append("RSI6超卖反弹")
+
+    # 4. 放量突破（成交量比前5日均量大50%+今日涨幅>2%）
+    if "volume" in df.columns and "close" in df.columns:
+        if len(df) >= 6:
+            pre_vol = df["volume"].iloc[-6:-1].mean()
+            vol_up = latest["volume"] > 1.5 * pre_vol
+            pct_chg = (latest["close"] - pre["close"]) / pre["close"] * 100 if pre["close"] > 0 else 0
+            if vol_up and pct_chg > 2:
+                signals.append("放量突破")
+    
+    # 5. 20日新高
+    if "close" in df.columns and len(df) >= 20:
+        if latest["close"] >= df["close"].iloc[-20:].max():
+            signals.append("20日新高")
+
+    # 6. 20日新低
+    if "close" in df.columns and len(df) >= 20:
+        if latest["close"] <= df["close"].iloc[-20:].min():
+            signals.append("20日新低")
+
+    return signals
+
+# --- 在主流程里批量选股与信号输出 ---
+if st.button("批量分析/自动选股"):
+    codes = [c.strip() for c in codes_input.split(",") if c.strip()]
+    selected = []
+    for code in codes:
+        st.header(f"【{code}】分析")
+        df = fetch_ak_data(code, start_date)
+        if df.empty:
+            st.warning(f"{code} 数据未获取到，可能代码错误或日期过近。")
+            continue
+        df = calc_indicators(df)
+        # 选股信号检测
+        sigs = stock_signals(df)
+        if sigs:
+            st.success(f"选股信号：{'，'.join(sigs)}")
+            selected.append((code, sigs))
+        else:
+            st.info("无明显选股信号。")
+        st.dataframe(df.tail(10))
+        plot_kline(df, code)
+        if ai_enable:
+            with st.spinner(f"AI分析{code}中..."):
+                ai_report = ai_trend_report(df, code, trend_days, openai_key)
+                st.info(ai_report)
+        st.divider()
+    # 全部选股信号批量汇总
+    if selected:
+        st.subheader("✅ 本次扫描入选股票/ETF及对应信号")
+        for code, sigs in selected:
+            st.write(f"【{code}】 {'，'.join(sigs)}")
+    else:
+        st.warning("本次无股票/ETF触发选股信号。")
+else:
+    st.markdown("> 支持多只A股/ETF批量自动选股与技术信号标注（可自定义条件），如需AI预测请填写OpenAI KEY。")
+
 # --- 主流程 ---
 if st.button("批量分析"):
     codes = [c.strip() for c in codes_input.split(",") if c.strip()]
