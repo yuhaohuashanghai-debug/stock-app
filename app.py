@@ -12,12 +12,16 @@ st.set_page_config(page_title="A股批量智能技术分析 & AI趋势预测", l
 st.title("📈 A股批量AI自动选股 & 智能趋势点评")
 
 # 1. 指数成分股接口兼容多字段
-def get_index_member_codes(index_code):
+@st.cache_data(show_spinner=False)
+def get_index_codes(index_code):
+    """
+    拉取指数成分股列表，兼容字段新旧版本
+    """
     try:
-        df = ak.index_stock_cons(index=index_code)
+        df = ak.index_stock_cons(symbol=index_code)  # 关键点：必须用symbol参数
         if "con_code" in df.columns:
             return df["con_code"].tolist()
-        elif "成分券代码" in df.columns:  # akshare部分老版本字段
+        elif "成分券代码" in df.columns:
             return df["成分券代码"].tolist()
         else:
             st.warning("指数成分股数据字段异常！")
@@ -45,10 +49,13 @@ def get_all_etf_codes():
 # 3. 全A股（不含沪深300、科创50）
 @st.cache_data(show_spinner=False)
 def get_all_a_codes_exclude_indexes():
+    """
+    拉取A股全市场代码，并自动剔除沪深300、科创50成分股（如你需要）
+    """
     try:
         all_a = ak.stock_info_a_code_name()["code"].tolist()
-        hs300 = set(get_index_member_codes("000300"))
-        kc50 = set(get_index_member_codes("000688"))
+        hs300 = set(get_index_codes("000300"))
+        kc50 = set(get_index_codes("000688"))
         only_a = [x for x in all_a if x not in hs300 and x not in kc50]
         return only_a
     except Exception as e:
@@ -60,9 +67,12 @@ def get_all_a_codes_exclude_indexes():
 def get_hot_concept_boards(topn=20):
     try:
         df = ak.stock_board_concept_name_ths()
-        if "涨跌幅" in df.columns:
-            hot_df = df.sort_values("涨跌幅", ascending=False).head(topn)
-            return hot_df[["板块名称", "涨跌幅"]]
+        # 字段自动识别（兼容旧的“概念名称”和“涨幅”）
+        name_col = "板块名称" if "板块名称" in df.columns else ("概念名称" if "概念名称" in df.columns else None)
+        pct_col = "涨跌幅" if "涨跌幅" in df.columns else ("涨幅" if "涨幅" in df.columns else None)
+        if name_col and pct_col:
+            hot_df = df.sort_values(pct_col, ascending=False).head(topn)
+            return hot_df[[name_col, pct_col]]
         else:
             st.warning("热门概念板块数据字段异常！")
             return pd.DataFrame()
