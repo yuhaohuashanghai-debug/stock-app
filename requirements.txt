@@ -5,3 +5,4 @@ numpy
 plotly
 openpyxl
 openai
+asttokens>=2.0
