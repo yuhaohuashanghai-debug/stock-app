@@ -2,86 +2,54 @@ import streamlit as st
 import pandas as pd
 import pandas_ta as ta
 import akshare as ak
+import plotly.graph_objects as go
 from datetime import datetime
 
-st.set_page_config(page_title="热门板块/ETF自动选股AI分析系统", layout="wide")
-st.title("🔥 热门行业/概念/ETF池 批量信号+AI智能分析")
+st.set_page_config(page_title="A股批量分析 & AI趋势预测", layout="wide")
+st.title("📈 A股批量智能技术分析 & AI趋势预测")
 
-# --- 1. 板块和ETF数据自动加载 ---
-@st.cache_data(ttl=3600)
-def get_hot_industry_rank():
-    return ak.stock_board_industry_rank_em()
-@st.cache_data(ttl=3600)
-def get_hot_concept_rank():
-    return ak.stock_board_concept_rank_em()
-@st.cache_data(ttl=3600)
-def get_hot_board_members(board_type, board_name):
-    if board_type == "industry":
-        df = ak.stock_board_industry_cons_em(symbol=board_name)
-    elif board_type == "concept":
-        df = ak.stock_board_concept_cons_em(symbol=board_name)
-    return df["代码"].tolist(), df
+tab1, tab2 = st.tabs(["🪄 全市场自动选股信号", "个股批量分析+AI点评"])
 
-@st.cache_data
-def get_all_etf_codes():
-    df = ak.fund_etf_category_sina(symbol="ETF基金")
-    return df["symbol"].tolist(), df
-
-# --- 2. 板块/概念/ETF池选择 ---
-tab1, tab2 = st.tabs(["🔥 板块/概念/ETF批量选股信号", "批量AI智能分析"])
-
+# =============== TAB 1：全A股/ETF自动选股 ===============
 with tab1:
-    st.subheader("🔮 热门行业/概念/ETF池 自动信号筛选与明细解释")
-    pool_type = st.selectbox(
-        "请选择池类型", 
-        ["热门行业板块", "热门概念板块", "全部ETF", "热门ETF（市值Top50）", "自定义股票池"], 
+    st.subheader("全市场池自动加载+多策略选股信号检测")
+    # --- 选股池选择 ---
+    @st.cache_data
+    def get_all_a_codes():
+        stock_df = ak.stock_info_a_code_name()
+        return stock_df["code"].tolist()
+    @st.cache_data
+    def get_all_etf_codes():
+        etf_df = ak.fund_etf_category_sina(symbol="ETF基金")
+        return etf_df["symbol"].tolist()
+    @st.cache_data
+    def get_index_codes(index_code):
+        df = ak.index_stock_cons(index=index_code)
+        return df["con_code"].tolist()
+    market_pool = st.selectbox(
+        "选择批量选股池",
+        options=["全A股", "全ETF", "沪深300", "科创50", "自定义"],
         index=0
     )
-    # 自动拉取成分池
-    code_pool, pool_show_df = [], None
-    if pool_type == "热门行业板块":
-        industry_df = get_hot_industry_rank()
-        show_num = st.slider("显示前N个热门行业", 5, 30, 12)
-        st.dataframe(industry_df[["板块名称","最新价","涨跌幅","领涨股"]].head(show_num), use_container_width=True)
-        hot_blocks = industry_df["板块名称"].head(show_num).tolist()
-        blocks_selected = st.multiselect("选择分析的热门行业板块", hot_blocks, default=hot_blocks[:2])
-        for blk in blocks_selected:
-            codes, df_blk = get_hot_board_members("industry", blk)
-            code_pool += codes
-            pool_show_df = pd.concat([pool_show_df, df_blk]) if pool_show_df is not None else df_blk
-    elif pool_type == "热门概念板块":
-        concept_df = get_hot_concept_rank()
-        show_num = st.slider("显示前N个热门概念", 5, 30, 12)
-        st.dataframe(concept_df[["板块名称","最新价","涨跌幅","领涨股"]].head(show_num), use_container_width=True)
-        hot_blocks = concept_df["板块名称"].head(show_num).tolist()
-        blocks_selected = st.multiselect("选择分析的热门概念板块", hot_blocks, default=hot_blocks[:2])
-        for blk in blocks_selected:
-            codes, df_blk = get_hot_board_members("concept", blk)
-            code_pool += codes
-            pool_show_df = pd.concat([pool_show_df, df_blk]) if pool_show_df is not None else df_blk
-    elif pool_type == "全部ETF":
-        etf_codes, etf_df = get_all_etf_codes()
-        show_num = st.slider("显示前N个ETF", 20, 200, 60)
-        st.dataframe(etf_df[["symbol","name","price"]].head(show_num), use_container_width=True)
-        code_pool = etf_codes[:show_num]
-        pool_show_df = etf_df.head(show_num)
-    elif pool_type == "热门ETF（市值Top50）":
-        etf_codes, etf_df = get_all_etf_codes()
-        etf_df = etf_df.sort_values("amount", ascending=False)
-        st.dataframe(etf_df[["symbol","name","price","amount"]].head(50), use_container_width=True)
-        code_pool = etf_df["symbol"].head(50).tolist()
-        pool_show_df = etf_df.head(50)
+    if market_pool == "全A股":
+        codes = get_all_a_codes()
+    elif market_pool == "全ETF":
+        codes = get_all_etf_codes()
+    elif market_pool == "沪深300":
+        codes = get_index_codes("000300")
+    elif market_pool == "科创50":
+        codes = get_index_codes("000688")
     else:
-        code_input = st.text_area("手动输入代码（逗号、空格或换行均可）")
-        code_pool = [c.strip() for c in code_input.replace('，', ',').replace('\n', ',').split(',') if c.strip()]
+        codes_input = st.text_area("手动输入代码（逗号、空格或换行均可）")
+        codes = []
+        for line in codes_input.splitlines():
+            for c in line.replace('，', ',').replace(' ', ',').split(','):
+                if c.strip():
+                    codes.append(c.strip())
+    st.info(f"本次选股池共计 {len(codes)} 只标的。")
+    start_date = st.date_input("起始日期", value=pd.to_datetime("2024-01-01"), key="pick_start")
+    btn = st.button("一键批量自动选股", key="btn_pick")
 
-    st.info(f"本次选股池共 {len(code_pool)} 只标的。")
-    if pool_show_df is not None:
-        st.dataframe(pool_show_df[["代码" if "代码" in pool_show_df.columns else "symbol","名称" if "名称" in pool_show_df.columns else "name"]], use_container_width=True)
-    start_date = st.date_input("起始日期", value=pd.to_datetime("2024-01-01"), key="blk_date")
-    btn = st.button("一键批量信号筛选", key="blk_btn")
-
-    # --- 技术信号检测逻辑同前，可复用 ---
     def fetch_ak_data(code, start_date):
         df = pd.DataFrame()
         try:
@@ -119,7 +87,7 @@ with tab1:
                 df["MACD"] = macd["MACD_12_26_9"]
                 df["MACDs"] = macd["MACDs_12_26_9"]
             df["RSI_6"] = ta.rsi(df["close"], length=6)
-        except Exception:
+        except Exception as e:
             pass
         return df
 
@@ -128,6 +96,7 @@ with tab1:
         signals = []
         latest = df.iloc[-1]
         pre = df.iloc[-2] if len(df) >= 2 else latest
+
         # 1. 均线金叉
         if "SMA_5" in df.columns and "SMA_10" in df.columns:
             if pre["SMA_5"] < pre["SMA_10"] and latest["SMA_5"] > latest["SMA_10"]:
@@ -137,6 +106,7 @@ with tab1:
                 explain.append(f"【均线金叉】：5日均线({latest['SMA_5']:.2f}) {'>' if latest['SMA_5']>latest['SMA_10'] else '<='} 10日均线({latest['SMA_10']:.2f})，未发生金叉。")
         else:
             explain.append("【均线金叉】：数据不足，无法判断。")
+
         # 2. MACD金叉
         if "MACD" in df.columns and "MACDs" in df.columns:
             if pre["MACD"] < pre["MACDs"] and latest["MACD"] > latest["MACDs"]:
@@ -146,6 +116,7 @@ with tab1:
                 explain.append(f"【MACD金叉】：MACD({latest['MACD']:.3f}) {'>' if latest['MACD']>latest['MACDs'] else '<='} 信号线({latest['MACDs']:.3f})，未发生金叉。")
         else:
             explain.append("【MACD金叉】：数据不足，无法判断。")
+
         # 3. RSI超卖反弹
         if "RSI_6" in df.columns:
             if latest["RSI_6"] < 30 and pre["RSI_6"] >= 30:
@@ -155,6 +126,7 @@ with tab1:
                 explain.append(f"【RSI超卖反弹】：RSI6当前为{latest['RSI_6']:.1f}，未触发超卖反弹。")
         else:
             explain.append("【RSI超卖反弹】：数据不足，无法判断。")
+
         # 4. 放量突破
         if "volume" in df.columns and "close" in df.columns and len(df) >= 6:
             pre_vol = df["volume"].iloc[-6:-1].mean()
@@ -167,6 +139,7 @@ with tab1:
                 explain.append(f"【放量突破】：今日成交量{latest['volume']}，均量{pre_vol:.0f}，{'放量' if vol_up else '未放量'}，涨幅{pct_chg:.2f}%。")
         else:
             explain.append("【放量突破】：数据不足，无法判断。")
+
         # 5. 20日新高
         if "close" in df.columns and len(df) >= 20:
             if latest["close"] >= df["close"].iloc[-20:].max():
@@ -176,6 +149,7 @@ with tab1:
                 explain.append(f"【20日新高】：今日收盘{latest['close']}，20日最高{df['close'].iloc[-20:].max()}，未创新高。")
         else:
             explain.append("【20日新高】：数据不足，无法判断。")
+
         # 6. 20日新低
         if "close" in df.columns and len(df) >= 20:
             if latest["close"] <= df["close"].iloc[-20:].min():
@@ -185,13 +159,13 @@ with tab1:
                 explain.append(f"【20日新低】：今日收盘{latest['close']}，20日最低{df['close'].iloc[-20:].min()}，未创新低。")
         else:
             explain.append("【20日新低】：数据不足，无法判断。")
+
         return signals, explain
 
-    # === 技术信号筛选主流程 ===
-    if btn and len(code_pool) > 0:
-        st.info(f"开始批量检测（建议单池不超300只）")
+    if btn:
+        st.info(f"开始批量检测，请耐心等待（建议每次选股池不超过200只，太多易超时）")
         result_table = []
-        for i, code in enumerate(code_pool):
+        for i, code in enumerate(codes):
             df = fetch_ak_data(code, start_date)
             if df.empty or len(df) < 25:
                 continue
@@ -202,14 +176,14 @@ with tab1:
                 "信号": "、".join(signals) if signals else "无明显信号",
                 "明细解释": "\n".join(explain)
             })
-            if i < 5:
+            if i < 10:
                 st.markdown(f"#### 【{code}】选股信号：{'、'.join(signals) if signals else '无明显信号'}")
                 with st.expander("信号检测明细（点击展开）", expanded=False):
                     for line in explain:
                         st.write(line)
         selected = [r for r in result_table if "无明显信号" not in r["信号"]]
         if selected:
-            st.subheader("✅ 入选标的与信号（可导出）")
+            st.subheader("✅ 入选标的与信号（可全部导出）")
             df_sel = pd.DataFrame(selected)
             st.dataframe(df_sel[["代码","信号"]])
             st.download_button(
@@ -218,21 +192,18 @@ with tab1:
                 file_name="选股明细.xlsx"
             )
         else:
-            st.warning("暂无标的触发选股信号，可换池、调策略。")
-    elif btn:
-        st.warning("请先选择或输入池。")
+            st.warning("暂无标的触发选股信号，可调整策略或换池。")
     else:
-        st.markdown("> 板块/概念/ETF/自定义一键批量信号检测、明细解释、AI批量扩展请切换到Tab2。")
+        st.markdown("> 支持全A股、ETF、指数成分、热门池一键批量自动选股+明细解释，结果可导出。")
 
-# === TAB2: ETF/自定义池 批量AI技术点评 ===
+# =============== TAB 2：原有批量分析&AI趋势点评 ===============
 with tab2:
-    st.subheader("批量AI智能分析（支持ETF/概念/自定义池）")
-    import plotly.graph_objects as go
-    openai_key = st.text_input("OpenAI API KEY（AI点评/趋势预测）", type="password", key="ai_key")
-    codes_input = st.text_area("输入待分析的股票/ETF代码（自动批量，逗号或换行分隔）", value="", key="ai_codes")
+    st.subheader("自定义股票池批量分析+AI智能点评")
+    openai_key = st.text_input("请输入你的OpenAI API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
+    codes_input = st.text_input("请输入A股股票代码（支持批量,如 600519,000977,588170）：", value="000977,518880", key="ai_codes")
+    start_date = st.date_input("选择起始日期", value=datetime.now().replace(year=2025, month=9, day=4), key="ai_date")
+    ai_enable = st.toggle("启用AI趋势点评", value=True, key="ai_toggle")
     trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1, key="ai_trend_days")
-    ai_enable = st.toggle("启用AI技术点评", value=True, key="ai_enable")
-    btn_ai = st.button("批量AI分析", key="btn_ai")
     def plot_kline(df, code):
         fig = go.Figure()
         fig.add_trace(go.Candlestick(
@@ -265,7 +236,7 @@ with tab2:
         use_df = df.tail(60)[["date", "open", "close", "high", "low", "volume"]]
         data_str = use_df.to_csv(index=False)
         prompt = f"""
-你是一位A股/ETF专业量化分析师。以下是{code}最近60日的每日行情（日期,开盘,收盘,最高,最低,成交量），请根据技术走势、成交量变化，预测该标的未来{trend_days}日的涨跌趋势，并判断是否存在启动信号、买卖机会，请以精炼中文输出一份点评。数据如下（csv格式）：
+你是一位A股专业量化分析师。以下是{code}最近60日的每日行情（日期,开盘,收盘,最高,最低,成交量），请根据技术走势、成交量变化，预测该股未来{trend_days}日的涨跌趋势，并判断是否存在启动信号、买卖机会，请以精炼中文输出一份点评。数据如下（csv格式）：
 {data_str}
 """
         try:
@@ -274,7 +245,7 @@ with tab2:
             chat_completion = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
-                    {"role": "system", "content": "你是一位专业A股/ETF分析师。"},
+                    {"role": "system", "content": "你是一位专业A股分析师。"},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=400,
@@ -284,13 +255,13 @@ with tab2:
         except Exception as ex:
             return f"AI分析调用失败：{ex}"
 
-    if btn_ai:
-        codes = [c.strip() for c in codes_input.replace('，', ',').replace('\n', ',').split(',') if c.strip()]
+    if st.button("批量分析", key="ai_btn"):
+        codes = [c.strip() for c in codes_input.split(",") if c.strip()]
         for code in codes:
-            st.header(f"【{code}】AI分析")
-            df = fetch_ak_data(code, pd.to_datetime("2024-01-01"))
+            st.header(f"【{code}】分析")
+            df = fetch_ak_data(code, start_date)
             if df.empty:
-                st.warning(f"{code} 数据未获取到。")
+                st.warning(f"{code} 数据未获取到，可能代码错误或日期过近。")
                 continue
             df = calc_indicators(df)
             st.dataframe(df.tail(10))
@@ -301,5 +272,4 @@ with tab2:
                     st.info(ai_report)
             st.divider()
     else:
-        st.markdown("> 批量支持ETF/板块/自选池AI技术点评、K线可视化，可输入多个代码。")
-
+        st.markdown("> 支持多只A股代码批量技术分析+AI自动点评（如需AI预测请填写OpenAI KEY）")
