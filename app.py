@@ -84,25 +84,25 @@ def plot_kline(df, code):
 def ai_trend_report(df, code, trend_days, openai_key):
     if not openai_key:
         return "未填写OpenAI KEY，无法生成AI趋势预测。"
-    # 只取最近60天的数据作为上下文，缩短token消耗
     use_df = df.tail(60)[["date", "open", "close", "high", "low", "volume"]]
-    # 转成prompt
     data_str = use_df.to_csv(index=False)
     prompt = f"""
 你是一位A股专业量化分析师。以下是{code}最近60日的每日行情（日期,开盘,收盘,最高,最低,成交量），请根据技术走势、成交量变化，预测该股未来{trend_days}日的涨跌趋势，并判断是否存在启动信号、买卖机会，请以精炼中文输出一份点评。数据如下（csv格式）：
 {data_str}
 """
-    # 调用OpenAI接口
     try:
-        openai.api_key = openai_key
-        resp = openai.ChatCompletion.create(
+        import openai
+        client = openai.OpenAI(api_key=openai_key)
+        chat_completion = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": "你是一位专业A股分析师。"},
-                      {"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "你是一位专业A股分析师。"},
+                {"role": "user", "content": prompt}
+            ],
             max_tokens=400,
             temperature=0.6,
         )
-        return resp.choices[0].message.content
+        return chat_completion.choices[0].message.content
     except Exception as ex:
         return f"AI分析调用失败：{ex}"
 
