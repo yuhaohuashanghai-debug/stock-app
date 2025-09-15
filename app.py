@@ -10,37 +10,108 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 st.set_page_config(page_title="A股批量智能技术分析 & AI趋势预测", layout="wide")
 st.title("📈 A股批量AI自动选股 & 智能趋势点评")
 
-# ============ 选股池工具函数 =============
+# ========== AkShare字段自动适配 + 热门排行榜（万能工具） ==========
+FIELD_MAP = {
+    'code': ['代码', '股票代码', '证券代码', 'con_code', '基金代码', 'symbol'],
+    'name': ['名称', '股票名称', '证券名称', '成分券名称', '基金简称', 'display_name', 'name'],
+    'change_pct': ['涨跌幅', '涨幅', '涨跌幅度', 'changepercent', '涨幅(%)'],
+    'board': ['板块名称', '概念名称', '行业名称'],
+}
+def get_col(df, key, strict=True, verbose=False):
+    candidates = FIELD_MAP.get(key, [key])
+    for cand in candidates:
+        for col in df.columns:
+            if cand.strip().lower() == col.strip().lower():
+                if verbose:
+                    print(f"找到{key}字段: {col}")
+                return col
+    if not strict:
+        return None
+    raise KeyError(f"DataFrame找不到‘{key}’相关字段，实际字段为: {df.columns.tolist()}")
+
 @st.cache_data(show_spinner=False)
 def get_all_a_codes():
     stock_df = ak.stock_info_a_code_name()
-    return stock_df["code"].tolist()
+    code_col = get_col(stock_df, 'code')
+    return stock_df[code_col].tolist()
 
 @st.cache_data(show_spinner=False)
 def get_all_etf_codes():
     etf_df = ak.fund_etf_category_sina(symbol="ETF基金")
-    return etf_df["symbol"].tolist()
+    code_col = get_col(etf_df, 'code')
+    return etf_df[code_col].tolist()
 
 @st.cache_data(show_spinner=False)
 def get_index_codes(index_code):
-    df = ak.index_stock_cons(index=index_code)
-    return df["con_code"].tolist()
+    df = ak.index_stock_cons(symbol=index_code)
+    code_col = get_col(df, 'code')
+    return df[code_col].tolist()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_hot_industry_boards(topn=20):
+    try:
+        df = ak.stock_board_industry_name_ths()
+        change_col = get_col(df, 'change_pct', strict=False)
+        board_col = get_col(df, 'board', strict=False)
+        if change_col:
+            hot_df = df.sort_values(change_col, ascending=False).head(topn)
+        else:
+            hot_df = df.head(topn)
+        if board_col and change_col:
+            return hot_df[[board_col, change_col]]
+        elif board_col:
+            return hot_df[[board_col]]
+        else:
+            return hot_df
+    except Exception as e:
+        print(f"获取行业板块异常: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_hot_concept_boards(topn=20):
     try:
         df = ak.stock_board_concept_name_ths()
-        hot_df = df.sort_values("涨跌幅", ascending=False).head(topn)
-        return hot_df[["板块名称", "涨跌幅"]]
-    except Exception:
+        change_col = get_col(df, 'change_pct', strict=False)
+        board_col = get_col(df, 'board', strict=False)
+        if change_col:
+            hot_df = df.sort_values(change_col, ascending=False).head(topn)
+        else:
+            hot_df = df.head(topn)
+        if board_col and change_col:
+            return hot_df[[board_col, change_col]]
+        elif board_col:
+            return hot_df[[board_col]]
+        else:
+            return hot_df
+    except Exception as e:
+        print(f"获取概念板块异常: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_hot_etf_boards(topn=20):
+    try:
+        df = ak.fund_etf_spot_em()
+        change_col = get_col(df, 'change_pct', strict=False)
+        name_col = get_col(df, 'name', strict=False)
+        code_col = get_col(df, 'code', strict=False)
+        if change_col:
+            hot_df = df.sort_values(change_col, ascending=False).head(topn)
+        else:
+            hot_df = df.head(topn)
+        cols = [c for c in [code_col, name_col, change_col] if c]
+        return hot_df[cols] if cols else hot_df
+    except Exception as e:
+        print(f"获取ETF排行异常: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_board_stocks(board_name):
     try:
         df = ak.stock_board_concept_cons_ths(symbol=board_name)
-        return df["代码"].tolist()
-    except Exception:
+        code_col = get_col(df, 'code')
+        return df[code_col].tolist()
+    except Exception as e:
+        print(f"获取板块成分股异常: {e}")
         return []
 
 # ============ 数据与指标函数 ============
@@ -168,6 +239,27 @@ def ai_trend_report(df, code, trend_days, openai_key):
     except Exception as ex:
         return f"AI分析调用失败：{ex}"
 
+# ========== 热门排行榜可视化（建议放在tab顶部） ==========
+with st.expander("🚀 热门行业/概念/ETF排行榜（涨幅Top20）", expanded=False):
+    st.markdown("#### 行业板块涨幅排行")
+    ind_df = get_hot_industry_boards(topn=20)
+    if not ind_df.empty:
+        st.dataframe(ind_df, use_container_width=True)
+    else:
+        st.warning("未获取到行业板块数据")
+    st.markdown("#### 概念板块涨幅排行")
+    con_df = get_hot_concept_boards(topn=20)
+    if not con_df.empty:
+        st.dataframe(con_df, use_container_width=True)
+    else:
+        st.warning("未获取到概念板块数据")
+    st.markdown("#### ETF基金涨幅排行")
+    etf_df = get_hot_etf_boards(topn=20)
+    if not etf_df.empty:
+        st.dataframe(etf_df, use_container_width=True)
+    else:
+        st.warning("未获取到ETF数据")
+
 # ============ 分批分页主界面 ============
 tab1, tab2 = st.tabs(["🪄 批量自动选股(分批)", "个股批量分析+AI点评"])
 
@@ -191,8 +283,13 @@ with tab1:
         st.markdown("#### 🔥 今日热门概念板块排行（涨幅前20）")
         hot_boards = get_hot_concept_boards()
         if not hot_boards.empty:
+            # 自动适配字段展示
             st.dataframe(hot_boards, hide_index=True, use_container_width=True)
-            selected_boards = st.multiselect("选择要检测的热门板块（可多选）", hot_boards["板块名称"].tolist())
+            board_col = get_col(hot_boards, 'board', strict=False)
+            selected_boards = st.multiselect(
+                "选择要检测的热门板块（可多选）",
+                hot_boards[board_col].tolist() if board_col else [],
+            )
             for board in selected_boards:
                 codes += get_board_stocks(board)
         else:
@@ -234,7 +331,6 @@ with tab1:
         st.info("开始本批次数据分析…")
         result_table = []
         prog = st.progress(0, text="数据处理中…")
-        # 1. 多线程并发拉取K线数据
         def fetch_ak_data_safe(code, start_date):
             try:
                 df = fetch_ak_data(code, start_date)
@@ -292,7 +388,7 @@ with tab1:
     else:
         st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股+AI趋势点评。")
 
-# ======= tab2维持原有结构（可参考上面优化），略 =======
+# ======= tab2批量分析AI，保持你的原有风格 =======
 with tab2:
     st.subheader("自定义股票池批量分析+AI智能点评")
     openai_key = st.text_input("请输入你的OpenAI API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
