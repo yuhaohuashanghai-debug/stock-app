@@ -65,27 +65,38 @@ def get_index_codes_auto(index_code):
     code_col = get_first_valid_column(df, code_candidates)
     return df[code_col].tolist()
 
+# ====== 板块排行（行业 + 概念自动兼容） ======
 @st.cache_data(ttl=1800)
 def get_hot_industry_boards(topn=20):
-    df = ak.stock_board_industry_name_ths()
+    try:
+        df = ak.stock_board_industry_index_ths()  # ✅ 行业行情接口，含涨跌幅
+    except Exception:
+        df = ak.stock_board_industry_name_ths()   # 兜底：只有名称和代码
     show_columns(df, "行业板块")
     return sort_by_pct_chg(df, topn=topn)
 
 @st.cache_data(ttl=1800)
 def get_hot_concept_boards(topn=20):
-    df = ak.stock_board_concept_name_ths()
+    try:
+        df = ak.stock_board_concept_index_ths()   # ✅ 概念行情接口，含涨跌幅
+    except Exception:
+        df = ak.stock_board_concept_name_ths()    # 兜底：只有名称和代码
     show_columns(df, "概念板块")
     return sort_by_pct_chg(df, topn=topn)
 
+# ====== 板块成分股（行业 + 概念自动兼容） ======
 @st.cache_data(ttl=300)
 def get_board_stocks(board_name):
     try:
-        df = ak.stock_board_concept_cons_ths(symbol=board_name)
-        return get_code_list(df)
+        df = ak.stock_board_concept_cons_ths(symbol=board_name)  # ✅ 尝试概念
     except Exception:
-        return []
+        try:
+            df = ak.stock_board_industry_cons_ths(symbol=board_name)  # ✅ 尝试行业
+        except Exception:
+            return []
+    return get_code_list(df) if not df.empty else []
 
-# ====== K线与信号判别函数 ======
+# ====== K线与信号判别函数（保持原样） ======
 def fetch_ak_data(code, start_date):
     df = pd.DataFrame()
     try:
@@ -111,6 +122,7 @@ def fetch_ak_data(code, start_date):
         pass
     return pd.DataFrame()
 
+# ====== 后续你的 calc_indicators、signal_with_explain、tab1/tab2/tab3 保持不变 ======
 def calc_indicators(df):
     if "close" not in df.columns or len(df) < 20:
         return df
