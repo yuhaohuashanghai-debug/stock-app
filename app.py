@@ -322,10 +322,33 @@ with tab2:
     trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1, key="ai_trend_days")
 
     def plot_kline(df, code):
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(
-            x=df["date"], open=df["open"], high=df["high"],
-            low=df["low"], close=df["close"], name="K线"))
-        if "SMA_5" in df.columns:
-            fig.add_trace(go.Scatter(x=df["date"], y=df["SMA_5"], mode='lines', name="SMA5"))
-        if "SMA_10
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=df["date"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="K线"))
+    if "SMA_5" in df.columns:
+        fig.add_trace(go.Scatter(x=df["date"], y=df["SMA_5"], mode='lines', name="SMA5"))
+    if "SMA_10" in df.columns:
+        fig.add_trace(go.Scatter(x=df["date"], y=df["SMA_10"], mode='lines', name="SMA10"))
+    if "SMA_20" in df.columns:
+        fig.add_trace(go.Scatter(x=df["date"], y=df["SMA_20"], mode='lines', name="SMA20"))
+    fig.update_layout(title=f"{code} K线与均线", xaxis_rangeslider_visible=False, height=400)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # MACD
+    if "MACD" in df.columns and "MACDh" in df.columns and "MACDs" in df.columns:
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(x=df["date"], y=df["MACDh"], name="MACD柱"))
+        fig2.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD线"))
+        fig2.add_trace(go.Scatter(x=df["date"], y=df["MACDs"], name="信号线"))
+        fig2.update_layout(title="MACD指标", height=200)
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # RSI
+    if "RSI_6" in df.columns:
+        fig3 = go.Figure()
+        fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_6"], name="RSI6"))
+        if "RSI_12" in df.columns:
+            fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_12"], name="RSI12"))
+        fig3.update_layout(title="RSI指标", height=200, yaxis=dict(range=[0,100]))
+        st.plotly_chart(fig3, use_container_width=True)
