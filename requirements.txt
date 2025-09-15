@@ -1,0 +1,6 @@
+streamlit>=1.30.0
+pandas>=2.0.0
+pandas_ta>=0.3.14b0
+akshare>=1.11.73
+plotly>=5.18.0
+openai>=1.14.3
