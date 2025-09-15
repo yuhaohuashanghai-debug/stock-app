@@ -1,8 +1,0 @@
-streamlit
-akshare
-pandas
-numpy
-plotly
-openpyxl
-openai
-asttokens>=2.0
