@@ -10,7 +10,7 @@ st.title("📈 A股批量智能技术分析 & AI趋势预测")
 
 tab1, tab2 = st.tabs(["🪄 全市场自动选股信号", "个股批量分析+AI点评"])
 
-# =============== TAB 1：全A股/ETF自动选股 ===============
+# =============== TAB 1：全A股/ETF/板块自动选股 ===============
 with tab1:
     st.subheader("全市场池自动加载+多策略选股信号检测")
     # --- 选股池选择 ---
@@ -26,11 +26,28 @@ with tab1:
     def get_index_codes(index_code):
         df = ak.index_stock_cons(index=index_code)
         return df["con_code"].tolist()
+    @st.cache_data(ttl=300)
+    def get_hot_concept_boards(topn=20):
+        try:
+            df = ak.stock_board_concept_name_ths()
+            hot_df = df.sort_values("涨跌幅", ascending=False).head(topn)
+            return hot_df[["板块名称", "涨跌幅"]]
+        except:
+            return pd.DataFrame()
+    @st.cache_data(ttl=300)
+    def get_board_stocks(board_name):
+        try:
+            df = ak.stock_board_concept_cons_ths(symbol=board_name)
+            return df["代码"].tolist()
+        except:
+            return []
+
     market_pool = st.selectbox(
         "选择批量选股池",
-        options=["全A股", "全ETF", "沪深300", "科创50", "自定义"],
+        options=["全A股", "全ETF", "沪深300", "科创50", "热门概念板块", "自定义"],
         index=0
     )
+    codes = []
     if market_pool == "全A股":
         codes = get_all_a_codes()
     elif market_pool == "全ETF":
@@ -39,13 +56,23 @@ with tab1:
         codes = get_index_codes("000300")
     elif market_pool == "科创50":
         codes = get_index_codes("000688")
+    elif market_pool == "热门概念板块":
+        st.markdown("#### 🔥 今日热门概念板块排行（涨幅前20）")
+        hot_boards = get_hot_concept_boards()
+        if not hot_boards.empty:
+            st.dataframe(hot_boards, hide_index=True, use_container_width=True)
+            selected_boards = st.multiselect("选择要检测的热门板块（可多选）", hot_boards["板块名称"].tolist())
+            for board in selected_boards:
+                codes += get_board_stocks(board)
+        else:
+            st.warning("未能获取热门板块数据")
     else:
         codes_input = st.text_area("手动输入代码（逗号、空格或换行均可）")
-        codes = []
         for line in codes_input.splitlines():
             for c in line.replace('，', ',').replace(' ', ',').split(','):
                 if c.strip():
                     codes.append(c.strip())
+    codes = list(set(codes))  # 去重
     st.info(f"本次选股池共计 {len(codes)} 只标的。")
     start_date = st.date_input("起始日期", value=pd.to_datetime("2024-01-01"), key="pick_start")
     btn = st.button("一键批量自动选股", key="btn_pick")
