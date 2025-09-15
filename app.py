@@ -166,41 +166,6 @@ def stock_signals(df):
 
     return signals
 
-# --- 在主流程里批量选股与信号输出 ---
-if st.button("批量分析/自动选股"):
-    codes = [c.strip() for c in codes_input.split(",") if c.strip()]
-    selected = []
-    for code in codes:
-        st.header(f"【{code}】分析")
-        df = fetch_ak_data(code, start_date)
-        if df.empty:
-            st.warning(f"{code} 数据未获取到，可能代码错误或日期过近。")
-            continue
-        df = calc_indicators(df)
-        # 选股信号检测
-        sigs = stock_signals(df)
-        if sigs:
-            st.success(f"选股信号：{'，'.join(sigs)}")
-            selected.append((code, sigs))
-        else:
-            st.info("无明显选股信号。")
-        st.dataframe(df.tail(10))
-        plot_kline(df, code)
-        if ai_enable:
-            with st.spinner(f"AI分析{code}中..."):
-                ai_report = ai_trend_report(df, code, trend_days, openai_key)
-                st.info(ai_report)
-        st.divider()
-    # 全部选股信号批量汇总
-    if selected:
-        st.subheader("✅ 本次扫描入选股票/ETF及对应信号")
-        for code, sigs in selected:
-            st.write(f"【{code}】 {'，'.join(sigs)}")
-    else:
-        st.warning("本次无股票/ETF触发选股信号。")
-else:
-    st.markdown("> 支持多只A股/ETF批量自动选股与技术信号标注（可自定义条件），如需AI预测请填写OpenAI KEY。")
-
 # --- 主流程 ---
 if st.button("批量分析"):
     codes = [c.strip() for c in codes_input.split(",") if c.strip()]
