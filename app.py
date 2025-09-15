@@ -143,31 +143,6 @@ def signal_with_explain(df):
         explain.append("【20日新低】：数据不足，无法判断。")
     return signals, explain
 
-def ai_trend_report(df, code, trend_days, openai_key):
-    if not openai_key:
-        return ""
-    use_df = df.tail(60)[["date", "open", "close", "high", "low", "volume"]]
-    data_str = use_df.to_csv(index=False)
-    prompt = f"""
-你是一位A股专业量化分析师。以下是{code}最近60日的每日行情（日期,开盘,收盘,最高,最低,成交量），请根据技术走势、成交量变化，预测该股未来{trend_days}日的涨跌趋势，并判断是否存在启动信号、买卖机会，请以精炼中文输出一份点评。数据如下（csv格式）：
-{data_str}
-"""
-    try:
-        import openai
-        client = openai.OpenAI(api_key=openai_key)
-        chat_completion = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "你是一位专业A股分析师。"},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=400,
-            temperature=0.6,
-        )
-        return chat_completion.choices[0].message.content
-    except Exception as ex:
-        return f"AI分析调用失败：{ex}"
-
 # ============ 分批分页主界面 ============
 tab1, tab2 = st.tabs(["🪄 批量自动选股(分批)", "个股批量分析+AI点评"])
 
@@ -224,12 +199,9 @@ with tab1:
     st.info(f"本批共{len(codes_this_batch)}只，股票池共{len(codes)}只。")
 
     start_date = st.date_input("起始日期", value=pd.to_datetime("2024-01-01"), key="pick_start")
-    openai_key = st.text_input("如需AI批量趋势点评，请输入OpenAI KEY", type="password", key="tab1_ai_key")
-    ai_batch = st.toggle("批量AI智能点评", value=True, key="ai_batch_tab1")
-    trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1, key="tab1_trend_days")
     btn = st.button("本批次一键自动选股", key="btn_pick")
 
-    # ========= 多线程并发拉取K线 + 信号AI智能点评 =========
+    # ========= 多线程并发拉取K线 + 信号 =========
     if btn and codes_this_batch:
         st.info("开始本批次数据分析…")
         result_table = []
@@ -250,38 +222,30 @@ with tab1:
                 prog.progress((i+1)/len(codes_this_batch), text=f"拉取进度：{i+1}/{len(codes_this_batch)}")
         prog.empty()
 
-        # 2. 信号判别和AI点评（仅对有信号股AI）
+        # 2. 信号判别（不包含AI）
         for i, code in enumerate(codes_this_batch):
             df = result_dict.get(code, pd.DataFrame())
             if df.empty or len(df) < 25:
                 continue
             df = calc_indicators(df)
             signals, explain = signal_with_explain(df)
-            ai_result = ""
-            if ai_batch and openai_key and signals:
-                with st.spinner(f"AI分析{code}中..."):
-                    ai_result = ai_trend_report(df, code, trend_days, openai_key)
-                    time.sleep(1.2)  # 限速，防止被封
             result_table.append({
                 "代码": code,
                 "信号": "、".join(signals) if signals else "无明显信号",
-                "明细解释": "\n".join(explain),
-                "AI点评": ai_result
+                "明细解释": "\n".join(explain)
             })
             if i < 6 and signals:  # 展示部分进度
                 st.markdown(f"#### 【{code}】选股信号：{'、'.join(signals) if signals else '无明显信号'}")
                 with st.expander("信号检测明细（点击展开）", expanded=False):
                     for line in explain:
                         st.write(line)
-                if ai_result:
-                    st.info(f"AI点评：{ai_result}")
 
-        # 3. 展示/导出结果
+        # 3. 展示/导出结果（不含AI点评）
         selected = [r for r in result_table if "无明显信号" not in r["信号"]]
         if selected:
-            st.subheader("✅ 入选标的与信号（可全部导出，含AI点评）")
+            st.subheader("✅ 入选标的与信号（可全部导出）")
             df_sel = pd.DataFrame(selected)
-            st.dataframe(df_sel[["代码","信号", "AI点评"]], use_container_width=True)
+            st.dataframe(df_sel[["代码","信号"]], use_container_width=True)
             st.download_button(
                 "导出全部明细为Excel",
                 data=pd.DataFrame(result_table).to_excel(index=False),
@@ -290,9 +254,9 @@ with tab1:
         else:
             st.warning("暂无标的触发选股信号，可切换批次、调整策略或换池。")
     else:
-        st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股+AI趋势点评。")
+        st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股。")
 
-# ======= tab2维持原有结构（可参考上面优化），略 =======
+# ======= tab2维持原有结构（含AI点评） =======
 with tab2:
     st.subheader("自定义股票池批量分析+AI智能点评")
     openai_key = st.text_input("请输入你的OpenAI API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
