@@ -352,3 +352,4 @@ with tab2:
             fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_12"], name="RSI12"))
         fig3.update_layout(title="RSI指标", height=200, yaxis=dict(range=[0,100]))
         st.plotly_chart(fig3, use_container_width=True)
+
