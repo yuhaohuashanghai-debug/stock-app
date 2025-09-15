@@ -6,187 +6,112 @@ import plotly.graph_objects as go
 from datetime import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import io
 
 st.set_page_config(page_title="A股批量智能技术分析 & AI趋势预测", layout="wide")
 st.title("📈 A股批量AI自动选股 & 智能趋势点评")
 
-# ============ 选股池工具函数 =============
-@st.cache_data(show_spinner=False)
-def get_all_a_codes():
-    stock_df = ak.stock_info_a_code_name()
-    return stock_df["code"].tolist()
+# 1. 指数成分股接口兼容多字段
+def get_index_member_codes(index_code):
+    try:
+        df = ak.index_stock_cons(index=index_code)
+        if "con_code" in df.columns:
+            return df["con_code"].tolist()
+        elif "成分券代码" in df.columns:  # akshare部分老版本字段
+            return df["成分券代码"].tolist()
+        else:
+            st.warning("指数成分股数据字段异常！")
+            return []
+    except Exception as e:
+        st.warning(f"拉取指数成分股失败: {e}")
+        return []
 
+# 2. ETF池拉取
 @st.cache_data(show_spinner=False)
 def get_all_etf_codes():
-    etf_df = ak.fund_etf_category_sina(symbol="ETF基金")
-    return etf_df["symbol"].tolist()
+    try:
+        etf_df = ak.fund_etf_category_sina(symbol="ETF基金")
+        if "symbol" in etf_df.columns:
+            return etf_df["symbol"].tolist()
+        elif "代码" in etf_df.columns:
+            return etf_df["代码"].tolist()
+        else:
+            st.warning("ETF数据结构异常！")
+            return []
+    except Exception as e:
+        st.warning(f"ETF拉取失败: {e}")
+        return []
 
+# 3. 全A股（不含沪深300、科创50）
 @st.cache_data(show_spinner=False)
-def get_index_codes(index_code):
-    df = ak.index_stock_cons(index=index_code)
-    return df["con_code"].tolist()
+def get_all_a_codes_exclude_indexes():
+    try:
+        all_a = ak.stock_info_a_code_name()["code"].tolist()
+        hs300 = set(get_index_member_codes("000300"))
+        kc50 = set(get_index_member_codes("000688"))
+        only_a = [x for x in all_a if x not in hs300 and x not in kc50]
+        return only_a
+    except Exception as e:
+        st.warning(f"A股拉取失败: {e}")
+        return []
 
+# 4. 热门概念板块拉取兼容
 @st.cache_data(ttl=300, show_spinner=False)
 def get_hot_concept_boards(topn=20):
     try:
         df = ak.stock_board_concept_name_ths()
-        hot_df = df.sort_values("涨跌幅", ascending=False).head(topn)
-        return hot_df[["板块名称", "涨跌幅"]]
-    except Exception:
+        if "涨跌幅" in df.columns:
+            hot_df = df.sort_values("涨跌幅", ascending=False).head(topn)
+            return hot_df[["板块名称", "涨跌幅"]]
+        else:
+            st.warning("热门概念板块数据字段异常！")
+            return pd.DataFrame()
+    except Exception as e:
+        st.warning(f"拉取热门板块失败: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_board_stocks(board_name):
     try:
         df = ak.stock_board_concept_cons_ths(symbol=board_name)
-        return df["代码"].tolist()
+        if "代码" in df.columns:
+            return df["代码"].tolist()
+        elif "股票代码" in df.columns:
+            return df["股票代码"].tolist()
+        else:
+            return []
     except Exception:
         return []
 
-# ============ 数据与指标函数 ============
-def fetch_ak_data(code, start_date):
-    df = pd.DataFrame()
-    try:
-        df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date.strftime("%Y%m%d"), adjust="qfq")
-        if not df.empty:
-            df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
-                               "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
-            df["date"] = pd.to_datetime(df["date"])
-            df.sort_values("date", inplace=True)
-            df.reset_index(drop=True, inplace=True)
-            return df
-    except Exception:
-        pass
-    # ETF兜底
-    try:
-        df = ak.fund_etf_hist_sina(symbol=code)
-        if not df.empty and "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"])
-            df = df[df["date"] >= pd.to_datetime(start_date)]
-            df = df.sort_values("date").reset_index(drop=True)
-            return df
-    except Exception:
-        pass
-    return pd.DataFrame()
+# ========= 数据与指标部分省略，复用你的原有逻辑 ===========
 
-def calc_indicators(df):
-    if "close" not in df.columns or len(df) < 20:
-        return df
-    try:
-        df["SMA_5"] = ta.sma(df["close"], length=5)
-        df["SMA_10"] = ta.sma(df["close"], length=10)
-        df["SMA_20"] = ta.sma(df["close"], length=20)
-        macd = ta.macd(df["close"])
-        if macd is not None and not macd.empty:
-            df["MACD"] = macd["MACD_12_26_9"]
-            df["MACDs"] = macd["MACDs_12_26_9"]
-        df["RSI_6"] = ta.rsi(df["close"], length=6)
-    except Exception:
-        pass
-    return df
+# fetch_ak_data, calc_indicators, signal_with_explain, ai_trend_report等函数和原来一致
+# ... 复制你的原有实现即可 ...
 
-def signal_with_explain(df):
-    explain = []
-    signals = []
-    latest = df.iloc[-1]
-    pre = df.iloc[-2] if len(df) >= 2 else latest
-    if "SMA_5" in df.columns and "SMA_10" in df.columns:
-        if pre["SMA_5"] < pre["SMA_10"] and latest["SMA_5"] > latest["SMA_10"]:
-            signals.append("5日均线金叉10日均线")
-            explain.append("【均线金叉】：今日5日均线上穿10日均线（金叉），多头信号。")
-        else:
-            explain.append(f"【均线金叉】：5日均线({latest['SMA_5']:.2f}) {'>' if latest['SMA_5']>latest['SMA_10'] else '<='} 10日均线({latest['SMA_10']:.2f})，未发生金叉。")
-    else:
-        explain.append("【均线金叉】：数据不足，无法判断。")
-    if "MACD" in df.columns and "MACDs" in df.columns:
-        if pre["MACD"] < pre["MACDs"] and latest["MACD"] > latest["MACDs"]:
-            signals.append("MACD金叉")
-            explain.append("【MACD金叉】：今日MACD线上穿信号线，金叉出现，多头信号。")
-        else:
-            explain.append(f"【MACD金叉】：MACD({latest['MACD']:.3f}) {'>' if latest['MACD']>latest['MACDs'] else '<='} 信号线({latest['MACDs']:.3f})，未发生金叉。")
-    else:
-        explain.append("【MACD金叉】：数据不足，无法判断。")
-    if "RSI_6" in df.columns:
-        if latest["RSI_6"] < 30 and pre["RSI_6"] >= 30:
-            signals.append("RSI6超卖反弹")
-            explain.append("【RSI超卖反弹】：今日RSI6跌破30出现反弹，短期见底迹象。")
-        else:
-            explain.append(f"【RSI超卖反弹】：RSI6当前为{latest['RSI_6']:.1f}，未触发超卖反弹。")
-    else:
-        explain.append("【RSI超卖反弹】：数据不足，无法判断。")
-    if "volume" in df.columns and "close" in df.columns and len(df) >= 6:
-        pre_vol = df["volume"].iloc[-6:-1].mean()
-        vol_up = latest["volume"] > 1.5 * pre_vol
-        pct_chg = (latest["close"] - pre["close"]) / pre["close"] * 100 if pre["close"] > 0 else 0
-        if vol_up and pct_chg > 2:
-            signals.append("放量突破")
-            explain.append("【放量突破】：今日成交量明显放大，且涨幅超过2%，主力资金有启动迹象。")
-        else:
-            explain.append(f"【放量突破】：今日成交量{latest['volume']}，均量{pre_vol:.0f}，{'放量' if vol_up else '未放量'}，涨幅{pct_chg:.2f}%。")
-    else:
-        explain.append("【放量突破】：数据不足，无法判断。")
-    if "close" in df.columns and len(df) >= 20:
-        if latest["close"] >= df["close"].iloc[-20:].max():
-            signals.append("20日新高")
-            explain.append("【20日新高】：今日收盘价达到近20日最高。")
-        else:
-            explain.append(f"【20日新高】：今日收盘{latest['close']}，20日最高{df['close'].iloc[-20:].max()}，未创新高。")
-    else:
-        explain.append("【20日新高】：数据不足，无法判断。")
-    if "close" in df.columns and len(df) >= 20:
-        if latest["close"] <= df["close"].iloc[-20:].min():
-            signals.append("20日新低")
-            explain.append("【20日新低】：今日收盘价达到近20日最低。")
-        else:
-            explain.append(f"【20日新低】：今日收盘{latest['close']}，20日最低{df['close'].iloc[-20:].min()}，未创新低。")
-    else:
-        explain.append("【20日新低】：数据不足，无法判断。")
-    return signals, explain
-
-def ai_trend_report(df, code, trend_days, openai_key):
-    if not openai_key:
-        return ""
-    use_df = df.tail(60)[["date", "open", "close", "high", "low", "volume"]]
-    data_str = use_df.to_csv(index=False)
-    prompt = f"""
-你是一位A股专业量化分析师。以下是{code}最近60日的每日行情（日期,开盘,收盘,最高,最低,成交量），请根据技术走势、成交量变化，预测该股未来{trend_days}日的涨跌趋势，并判断是否存在启动信号、买卖机会，请以精炼中文输出一份点评。数据如下（csv格式）：
-{data_str}
-"""
-    try:
-        import openai
-        client = openai.OpenAI(api_key=openai_key)
-        chat_completion = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "你是一位专业A股分析师。"},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=400,
-            temperature=0.6,
-        )
-        return chat_completion.choices[0].message.content
-    except Exception as ex:
-        return f"AI分析调用失败：{ex}"
-
-# ============ 分批分页主界面 ============
+# ========= 主界面 =========
 tab1, tab2 = st.tabs(["🪄 批量自动选股(分批)", "个股批量分析+AI点评"])
 
 with tab1:
-    st.subheader("全市场/ETF/指数/概念池自动选股，支持分批分析")
+    st.subheader("全A股/沪深300/科创50/ETF/热门板块自动选股，趋势股池专属板块")
     market_pool = st.selectbox(
         "选择批量选股池",
-        options=["全A股", "全ETF", "沪深300", "科创50", "热门概念板块", "自定义"],
+        options=["全A股(不含沪深300、科创50)", "沪深300", "科创50", "全ETF", "热门概念板块", "自定义"],
         index=0
     )
     codes = []
-    if market_pool == "全A股":
-        codes = get_all_a_codes()
+    show_desc = ""
+    if market_pool.startswith("全A股"):
+        codes = get_all_a_codes_exclude_indexes()
+        show_desc = "（全A股，已剔除沪深300与科创50成分股）"
+    elif market_pool == "沪深300":
+        codes = get_index_member_codes("000300")
+        show_desc = "（沪深300指数成分股）"
+    elif market_pool == "科创50":
+        codes = get_index_member_codes("000688")
+        show_desc = "（科创50指数成分股）"
     elif market_pool == "全ETF":
         codes = get_all_etf_codes()
-    elif market_pool == "沪深300":
-        codes = get_index_codes("000300")
-    elif market_pool == "科创50":
-        codes = get_index_codes("000688")
+        show_desc = "（全ETF基金）"
     elif market_pool == "热门概念板块":
         st.markdown("#### 🔥 今日热门概念板块排行（涨幅前20）")
         hot_boards = get_hot_concept_boards()
@@ -195,6 +120,7 @@ with tab1:
             selected_boards = st.multiselect("选择要检测的热门板块（可多选）", hot_boards["板块名称"].tolist())
             for board in selected_boards:
                 codes += get_board_stocks(board)
+            show_desc = "（热门概念板块池，成分股合并）"
         else:
             st.warning("未能获取热门板块数据")
     else:
@@ -203,9 +129,11 @@ with tab1:
             for c in line.replace('，', ',').replace(' ', ',').split(','):
                 if c.strip():
                     codes.append(c.strip())
+        show_desc = "（自定义池）"
     codes = list(set(codes))
+    st.info(f"{show_desc} 选股池共计 {len(codes)} 只标的。")
 
-    # ========= 分批分页逻辑 =========
+    # ======== 分批分页 ========
     BATCH_SIZE = 200
     if "page" not in st.session_state:
         st.session_state["page"] = 0
@@ -234,7 +162,6 @@ with tab1:
         st.info("开始本批次数据分析…")
         result_table = []
         prog = st.progress(0, text="数据处理中…")
-        # 1. 多线程并发拉取K线数据
         def fetch_ak_data_safe(code, start_date):
             try:
                 df = fetch_ak_data(code, start_date)
@@ -251,6 +178,7 @@ with tab1:
         prog.empty()
 
         # 2. 信号判别和AI点评（仅对有信号股AI）
+        trend_stock_pool = []
         for i, code in enumerate(codes_this_batch):
             df = result_dict.get(code, pd.DataFrame())
             if df.empty or len(df) < 25:
@@ -262,37 +190,57 @@ with tab1:
                 with st.spinner(f"AI分析{code}中..."):
                     ai_result = ai_trend_report(df, code, trend_days, openai_key)
                     time.sleep(1.2)  # 限速，防止被封
-            result_table.append({
+            row = {
                 "代码": code,
                 "信号": "、".join(signals) if signals else "无明显信号",
                 "明细解释": "\n".join(explain),
                 "AI点评": ai_result
-            })
-            if i < 6 and signals:  # 展示部分进度
-                st.markdown(f"#### 【{code}】选股信号：{'、'.join(signals) if signals else '无明显信号'}")
+            }
+            result_table.append(row)
+            if signals:
+                trend_stock_pool.append(row)
+            if i < 6 and signals:
+                st.markdown(f"#### 【{code}】选股信号：{'、'.join(signals)}")
                 with st.expander("信号检测明细（点击展开）", expanded=False):
                     for line in explain:
                         st.write(line)
                 if ai_result:
                     st.info(f"AI点评：{ai_result}")
 
-        # 3. 展示/导出结果
-        selected = [r for r in result_table if "无明显信号" not in r["信号"]]
-        if selected:
-            st.subheader("✅ 入选标的与信号（可全部导出，含AI点评）")
-            df_sel = pd.DataFrame(selected)
-            st.dataframe(df_sel[["代码","信号", "AI点评"]], use_container_width=True)
+        # ========= 趋势股池专属板块 =========
+        st.markdown("---")
+        st.subheader("🚩 本批趋势股池（所有检测出信号的标的）")
+        if trend_stock_pool:
+            df_pool = pd.DataFrame(trend_stock_pool)
+            st.dataframe(df_pool[["代码", "信号", "AI点评"]], use_container_width=True)
+            # 支持导出趋势股池
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_pool.to_excel(writer, index=False)
             st.download_button(
-                "导出全部明细为Excel",
-                data=pd.DataFrame(result_table).to_excel(index=False),
-                file_name="AI选股明细.xlsx"
+                "导出趋势股池为Excel",
+                data=output.getvalue(),
+                file_name="趋势股池.xlsx"
             )
         else:
-            st.warning("暂无标的触发选股信号，可切换批次、调整策略或换池。")
-    else:
-        st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股+AI趋势点评。")
+            st.info("本批暂无趋势信号股。")
 
-# ======= tab2维持原有结构（可参考上面优化），略 =======
+        # ========= 全部结果导出 =========
+        st.markdown("---")
+        with st.expander("导出全部明细（含无信号）", expanded=False):
+            df_all = pd.DataFrame(result_table)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_all.to_excel(writer, index=False)
+            st.download_button(
+                "导出全部分析明细为Excel",
+                data=output.getvalue(),
+                file_name="AI选股明细_全部含无信号.xlsx"
+            )
+    else:
+        st.markdown("> 支持全A股（已剔除沪深300/科创50）、沪深300、科创50、ETF、热门板块一键分批自动选股+AI趋势点评。趋势信号股高亮输出专属板块。")
+
+# 其余Tab2同前，略。
 with tab2:
     st.subheader("自定义股票池批量分析+AI智能点评")
     openai_key = st.text_input("请输入你的OpenAI API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
