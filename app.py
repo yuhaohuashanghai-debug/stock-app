@@ -8,7 +8,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="A股批量智能技术分析 & AI趋势预测", layout="wide")
-st.title("📈 A股批量AI自动选股 & 智能趋势点评（全接口兼容）")
+st.title("📈 A股批量AI自动选股 & 智能趋势点评")
 
 # ====== 通用字段兼容工具 ======
 def get_first_valid_column(df, candidates):
