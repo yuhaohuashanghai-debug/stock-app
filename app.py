@@ -19,7 +19,7 @@ ai_enable = st.toggle("启用AI趋势点评", value=True)
 trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1)
 
 # --- AkShare获取行情数据 ---
-@st.cache_data(ttl=1200)
+
 def fetch_ak_data(code, start_date):
     import akshare as ak
     import pandas as pd
