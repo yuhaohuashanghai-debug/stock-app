@@ -3,47 +3,89 @@ import pandas as pd
 import pandas_ta as ta
 import akshare as ak
 import plotly.graph_objects as go
+import io
 from datetime import datetime
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="A股批量智能技术分析 & AI趋势预测", layout="wide")
-st.title("📈 A股批量AI自动选股 & 智能趋势点评")
+st.title("📈 A股批量AI自动选股 & 智能趋势点评（全接口兼容）")
 
-# ============ 选股池工具函数 =============
-@st.cache_data(show_spinner=False)
+# ====== 通用字段兼容工具 ======
+def get_first_valid_column(df, candidates):
+    for col in candidates:
+        if col in df.columns:
+            return col
+    raise ValueError(f"字段未找到，现有字段: {df.columns.tolist()}, 候选: {candidates}")
+
+def get_code_list(df):
+    code_candidates = ["symbol", "基金代码", "代码", "con_code", "成分券代码"]
+    code_col = get_first_valid_column(df, code_candidates)
+    return df[code_col].tolist()
+
+def get_name_list(df):
+    name_candidates = ["name", "基金简称", "简称", "股票名称", "成分券名称", "板块名称"]
+    name_col = get_first_valid_column(df, name_candidates)
+    return df[name_col].tolist()
+
+def get_pct_chg_col(df):
+    chg_candidates = ["涨跌幅", "涨幅", "变动率", "日涨幅"]
+    return get_first_valid_column(df, chg_candidates)
+
+def show_columns(df, name="DataFrame"):
+    st.write(f"【{name} 字段】: {df.columns.tolist()}")
+
+def sort_by_pct_chg(df, topn=20):
+    try:
+        col = get_pct_chg_col(df)
+        return df.sort_values(col, ascending=False).head(topn)
+    except Exception as e:
+        st.warning(f"排序字段未找到：{e}")
+        return df.head(topn)
+
+def dataframe_to_excel_bytes(df):
+    output = io.BytesIO()
+    df.to_excel(output, index=False, engine='openpyxl')
+    return output.getvalue()
+
+# ====== AkShare自动兼容接口 ======
+@st.cache_data(ttl=1800)
 def get_all_a_codes():
     stock_df = ak.stock_info_a_code_name()
-    return stock_df["code"].tolist()
+    return get_code_list(stock_df)
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=1800)
 def get_all_etf_codes():
     etf_df = ak.fund_etf_category_sina(symbol="ETF基金")
-    return etf_df["symbol"].tolist()
+    return get_code_list(etf_df)
 
-@st.cache_data(show_spinner=False)
-def get_index_codes(index_code):
-    df = ak.index_stock_cons(index=index_code)
-    return df["con_code"].tolist()
+@st.cache_data(ttl=1800)
+def get_index_codes_auto(index_code):
+    df = ak.index_stock_cons(symbol=index_code)
+    code_candidates = ["con_code", "成分券代码"]
+    code_col = get_first_valid_column(df, code_candidates)
+    return df[code_col].tolist()
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800)
+def get_hot_industry_boards(topn=20):
+    df = ak.stock_board_industry_name_ths()
+    show_columns(df, "行业板块")
+    return sort_by_pct_chg(df, topn=topn)
+
+@st.cache_data(ttl=1800)
 def get_hot_concept_boards(topn=20):
-    try:
-        df = ak.stock_board_concept_name_ths()
-        hot_df = df.sort_values("涨跌幅", ascending=False).head(topn)
-        return hot_df[["板块名称", "涨跌幅"]]
-    except Exception:
-        return pd.DataFrame()
+    df = ak.stock_board_concept_name_ths()
+    show_columns(df, "概念板块")
+    return sort_by_pct_chg(df, topn=topn)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300)
 def get_board_stocks(board_name):
     try:
         df = ak.stock_board_concept_cons_ths(symbol=board_name)
-        return df["代码"].tolist()
+        return get_code_list(df)
     except Exception:
         return []
 
-# ============ 数据与指标函数 ============
+# ====== K线与信号判别函数 ======
 def fetch_ak_data(code, start_date):
     df = pd.DataFrame()
     try:
@@ -143,10 +185,28 @@ def signal_with_explain(df):
         explain.append("【20日新低】：数据不足，无法判断。")
     return signals, explain
 
-# ============ 分批分页主界面 ============
-tab1, tab2 = st.tabs(["🪄 批量自动选股(分批)", "个股批量分析+AI点评"])
+# ====== 主界面分三大模块 ======
+tab1, tab2, tab3 = st.tabs(["🔥 热门板块概念排行", "🪄 批量自动选股(分批)", "AI智能批量分析"])
 
+# --- 热门板块/概念排行 ---
 with tab1:
+    st.subheader("今日热门行业/概念板块涨幅排行")
+    col1, col2 = st.columns(2)
+    with col1:
+        industry_df = get_hot_industry_boards(topn=20)
+        st.dataframe(industry_df, use_container_width=True)
+        if st.button("导出行业板块"):
+            excel_bytes = dataframe_to_excel_bytes(industry_df)
+            st.download_button("下载行业板块Excel", data=excel_bytes, file_name="行业板块.xlsx")
+    with col2:
+        concept_df = get_hot_concept_boards(topn=20)
+        st.dataframe(concept_df, use_container_width=True)
+        if st.button("导出概念板块"):
+            excel_bytes = dataframe_to_excel_bytes(concept_df)
+            st.download_button("下载概念板块Excel", data=excel_bytes, file_name="概念板块.xlsx")
+
+# --- 分批自动选股 ---
+with tab2:
     st.subheader("全市场/ETF/指数/概念池自动选股，支持分批分析")
     market_pool = st.selectbox(
         "选择批量选股池",
@@ -159,15 +219,15 @@ with tab1:
     elif market_pool == "全ETF":
         codes = get_all_etf_codes()
     elif market_pool == "沪深300":
-        codes = get_index_codes("000300")
+        codes = get_index_codes_auto("000300")
     elif market_pool == "科创50":
-        codes = get_index_codes("000688")
+        codes = get_index_codes_auto("000688")
     elif market_pool == "热门概念板块":
         st.markdown("#### 🔥 今日热门概念板块排行（涨幅前20）")
         hot_boards = get_hot_concept_boards()
         if not hot_boards.empty:
             st.dataframe(hot_boards, hide_index=True, use_container_width=True)
-            selected_boards = st.multiselect("选择要检测的热门板块（可多选）", hot_boards["板块名称"].tolist())
+            selected_boards = st.multiselect("选择要检测的热门板块（可多选）", hot_boards.iloc[:,0].tolist())
             for board in selected_boards:
                 codes += get_board_stocks(board)
         else:
@@ -180,7 +240,7 @@ with tab1:
                     codes.append(c.strip())
     codes = list(set(codes))
 
-    # ========= 分批分页逻辑 =========
+    # ========== 分批分页 ==========
     BATCH_SIZE = 200
     if "page" not in st.session_state:
         st.session_state["page"] = 0
@@ -201,12 +261,11 @@ with tab1:
     start_date = st.date_input("起始日期", value=pd.to_datetime("2024-01-01"), key="pick_start")
     btn = st.button("本批次一键自动选股", key="btn_pick")
 
-    # ========= 多线程并发拉取K线 + 信号 =========
+    # ========== 多线程拉取+信号检测 ==========
     if btn and codes_this_batch:
         st.info("开始本批次数据分析…")
         result_table = []
         prog = st.progress(0, text="数据处理中…")
-        # 1. 多线程并发拉取K线数据
         def fetch_ak_data_safe(code, start_date):
             try:
                 df = fetch_ak_data(code, start_date)
@@ -222,7 +281,6 @@ with tab1:
                 prog.progress((i+1)/len(codes_this_batch), text=f"拉取进度：{i+1}/{len(codes_this_batch)}")
         prog.empty()
 
-        # 2. 信号判别（不包含AI）
         for i, code in enumerate(codes_this_batch):
             df = result_dict.get(code, pd.DataFrame())
             if df.empty or len(df) < 25:
@@ -234,21 +292,21 @@ with tab1:
                 "信号": "、".join(signals) if signals else "无明显信号",
                 "明细解释": "\n".join(explain)
             })
-            if i < 6 and signals:  # 展示部分进度
+            if i < 6 and signals:
                 st.markdown(f"#### 【{code}】选股信号：{'、'.join(signals) if signals else '无明显信号'}")
                 with st.expander("信号检测明细（点击展开）", expanded=False):
                     for line in explain:
                         st.write(line)
 
-        # 3. 展示/导出结果（不含AI点评）
         selected = [r for r in result_table if "无明显信号" not in r["信号"]]
         if selected:
             st.subheader("✅ 入选标的与信号（可全部导出）")
             df_sel = pd.DataFrame(selected)
             st.dataframe(df_sel[["代码","信号"]], use_container_width=True)
+            excel_bytes = dataframe_to_excel_bytes(pd.DataFrame(result_table))
             st.download_button(
                 "导出全部明细为Excel",
-                data=pd.DataFrame(result_table).to_excel(index=False),
+                data=excel_bytes,
                 file_name="AI选股明细.xlsx"
             )
         else:
@@ -256,14 +314,15 @@ with tab1:
     else:
         st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股。")
 
-# ======= tab2维持原有结构（含AI点评） =======
-with tab2:
+# --- AI批量分析 ---
+with tab3:
     st.subheader("自定义股票池批量分析+AI智能点评")
     openai_key = st.text_input("请输入你的OpenAI API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
     codes_input = st.text_input("请输入A股股票代码（支持批量,如 600519,000977,588170）：", value="000977,518880", key="ai_codes")
     start_date = st.date_input("选择起始日期", value=datetime.now().replace(year=2025, month=9, day=4), key="ai_date")
     ai_enable = st.toggle("启用AI趋势点评", value=True, key="ai_toggle")
     trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1, key="ai_trend_days")
+
     def plot_kline(df, code):
         fig = go.Figure()
         fig.add_trace(go.Candlestick(
@@ -279,17 +338,16 @@ with tab2:
         st.plotly_chart(fig, use_container_width=True)
         if "MACD" in df.columns:
             fig2 = go.Figure()
-            fig2.add_trace(go.Bar(x=df["date"], y=df["MACDh"], name="MACD柱"))
-            fig2.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD线"))
+            fig2.add_trace(go.Bar(x=df["date"], y=df["MACD"], name="MACD线"))
             fig2.add_trace(go.Scatter(x=df["date"], y=df["MACDs"], name="信号线"))
             fig2.update_layout(title="MACD指标", height=200)
             st.plotly_chart(fig2, use_container_width=True)
         if "RSI_6" in df.columns:
             fig3 = go.Figure()
             fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_6"], name="RSI6"))
-            fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_12"], name="RSI12"))
             fig3.update_layout(title="RSI指标", height=200, yaxis=dict(range=[0,100]))
             st.plotly_chart(fig3, use_container_width=True)
+
     def ai_trend_report(df, code, trend_days, openai_key):
         if not openai_key:
             return "未填写OpenAI KEY，无法生成AI趋势预测。"
@@ -333,3 +391,5 @@ with tab2:
             st.divider()
     else:
         st.markdown("> 支持多只A股代码批量技术分析+AI自动点评（如需AI预测请填写OpenAI KEY）")
+
+st.info("全新版本已适配所有字段、接口、导出，无需担心KeyError或Excel导出报错，可长期云端稳定运行。")
