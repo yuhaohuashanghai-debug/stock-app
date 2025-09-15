@@ -21,34 +21,33 @@ trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1)
 # --- AkShare获取行情数据 ---
 @st.cache_data(ttl=1200)
 def fetch_ak_data(code, start_date):
+    import akshare as ak
+    import pandas as pd
+    df = pd.DataFrame()
     try:
+        # 先尝试A股股票
         df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date.strftime("%Y%m%d"), adjust="qfq")
-        df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
-                           "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
-        df["date"] = pd.to_datetime(df["date"])
-        df.sort_values("date", inplace=True)
-        df.reset_index(drop=True, inplace=True)
-        return df
-    except Exception as e:
-        return pd.DataFrame()
-
-# --- 指标计算 ---
-def calc_indicators(df):
-    if "close" not in df.columns or len(df) < 20:
-        return df
-    try:
-        df["SMA_5"] = ta.sma(df["close"], length=5)
-        df["SMA_10"] = ta.sma(df["close"], length=10)
-        df["SMA_20"] = ta.sma(df["close"], length=20)
-        macd = ta.macd(df["close"])
-        df["MACD"] = macd["MACD_12_26_9"]
-        df["MACDs"] = macd["MACDs_12_26_9"]
-        df["MACDh"] = macd["MACDh_12_26_9"]
-        df["RSI_6"] = ta.rsi(df["close"], length=6)
-        df["RSI_12"] = ta.rsi(df["close"], length=12)
-    except:
+        if not df.empty:
+            df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
+                               "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
+            df["date"] = pd.to_datetime(df["date"])
+            df.sort_values("date", inplace=True)
+            df.reset_index(drop=True, inplace=True)
+            return df
+    except Exception:
         pass
-    return df
+    # 尝试新浪ETF接口（适配大部分ETF）
+    try:
+        df = ak.fund_etf_hist_sina(symbol=code)
+        if not df.empty and "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+            df = df[df["date"] >= pd.to_datetime(start_date)]
+            df = df.sort_values("date")
+            df = df.reset_index(drop=True)
+            return df
+    except Exception:
+        pass
+    return pd.DataFrame()
 
 # --- 图表展示 ---
 def plot_kline(df, code):
