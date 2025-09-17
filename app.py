@@ -4,6 +4,7 @@ import pandas_ta as ta
 import akshare as ak
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import plotly.express as px
 import requests
 
 # ========== 页面配置 ==========
@@ -82,11 +83,19 @@ def fetch_fund_flow(code: str):
 def fetch_stock_concepts(code: str):
     try:
         all_concepts = ak.stock_board_concept_name_ths()
+        # 自动识别字段
+        if "名称" in all_concepts.columns:
+            concept_col = "名称"
+        elif "板块名称" in all_concepts.columns:
+            concept_col = "板块名称"
+        else:
+            return [f"未找到板块字段，现有字段: {all_concepts.columns.tolist()}"]
+
         result = []
-        for name in all_concepts["名称"]:
+        for name in all_concepts[concept_col]:
             try:
                 cons = ak.stock_board_concept_cons_ths(symbol=name)
-                if code in cons["代码"].tolist():
+                if "代码" in cons.columns and code in cons["代码"].tolist():
                     result.append(name)
             except:
                 continue
@@ -97,7 +106,20 @@ def fetch_stock_concepts(code: str):
 @st.cache_data(ttl=300)
 def fetch_concept_fund_flow():
     try:
-        return ak.stock_board_concept_fund_flow_ths()
+        df = ak.stock_board_concept_fund_flow_ths()
+        if "板块名称" not in df.columns:
+            df.rename(columns={df.columns[0]: "板块名称"}, inplace=True)
+        if "主力净流入" not in df.columns:
+            for col in df.columns:
+                if "净流入" in col:
+                    df.rename(columns={col: "主力净流入"}, inplace=True)
+                    break
+        if "涨跌幅" not in df.columns:
+            for col in df.columns:
+                if "涨跌" in col:
+                    df.rename(columns={col: "涨跌幅"}, inplace=True)
+                    break
+        return df
     except Exception as e:
         return pd.DataFrame({"error": [str(e)]})
 
@@ -266,8 +288,31 @@ if analyze_btn:
             if not flow_df.empty and "error" not in flow_df.columns:
                 flow_df = flow_df[flow_df["板块名称"].isin(concepts)]
                 if not flow_df.empty:
-                    flow_df["主力净流入"] = flow_df["主力净流入"].apply(format_money)
+                    # 数值化并排序
+                    flow_df["主力净流入数值"] = pd.to_numeric(flow_df["主力净流入"], errors="coerce")
+                    flow_df["涨跌幅数值"] = pd.to_numeric(flow_df["涨跌幅"], errors="coerce")
+                    flow_df = flow_df.sort_values("主力净流入数值", ascending=False)
+
+                    # 表格
                     st.dataframe(flow_df[["板块名称","涨跌幅","主力净流入"]])
+
+                    # 热力图（双维度）
+                    heatmap_df = pd.melt(
+                        flow_df,
+                        id_vars=["板块名称"],
+                        value_vars=["主力净流入数值", "涨跌幅数值"],
+                        var_name="指标",
+                        value_name="数值"
+                    )
+                    fig = px.imshow(
+                        heatmap_df.pivot(index="指标", columns="板块名称", values="数值").values,
+                        labels=dict(x="板块名称", y="指标", color="数值"),
+                        x=flow_df["板块名称"].tolist(),
+                        y=["主力净流入", "涨跌幅"],
+                        color_continuous_scale="RdYlGn"
+                    )
+                    fig.update_layout(height=500, margin=dict(l=40, r=40, t=40, b=40))
+                    st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.write("暂无板块资金流数据")
             else:
