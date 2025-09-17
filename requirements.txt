@@ -4,3 +4,4 @@ pandas_ta
 akshare
 plotly
 requests
+urllib3
