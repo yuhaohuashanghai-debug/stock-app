@@ -21,7 +21,11 @@ def get_all_a_codes():
 @st.cache_data(show_spinner=False)
 def get_all_etf_codes():
     etf_df = ak.fund_etf_category_sina(symbol="ETF基金")
-    return etf_df["symbol"].tolist()
+    for col in ['symbol', '代码', 'fund']:
+        if col in etf_df.columns:
+            return etf_df[col].tolist()
+    st.error(f"ETF数据字段异常: {etf_df.columns}")
+    return []
 
 @st.cache_data(show_spinner=False)
 def get_index_codes(index_code):
@@ -60,18 +64,20 @@ code2board = get_code_board_map()
 
 # ============ 数据与指标函数 ============
 def fetch_ak_data(code, start_date):
-    df = pd.DataFrame()
-    try:
-        df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date.strftime("%Y%m%d"), adjust="qfq")
-        if not df.empty:
-            df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
-                               "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
-            df["date"] = pd.to_datetime(df["date"])
-            df.sort_values("date", inplace=True)
-            df.reset_index(drop=True, inplace=True)
-            return df
-    except Exception:
-        pass
+    # 支持多天回退，提升成功率
+    for delta in range(0, 7):  # 尝试一周
+        try:
+            d = start_date - pd.Timedelta(days=delta)
+            df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=d.strftime("%Y%m%d"), adjust="qfq")
+            if not df.empty:
+                df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
+                                   "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
+                df["date"] = pd.to_datetime(df["date"])
+                df.sort_values("date", inplace=True)
+                df.reset_index(drop=True, inplace=True)
+                return df
+        except Exception:
+            pass
     # ETF兜底
     try:
         df = ak.fund_etf_hist_sina(symbol=code)
@@ -95,7 +101,8 @@ def calc_indicators(df):
         if macd is not None and not macd.empty:
             df["MACD"] = macd["MACD_12_26_9"]
             df["MACDs"] = macd["MACDs_12_26_9"]
-        df["RSI_6"] = ta.rsi(df["close"], length=6)
+            if "MACDh_12_26_9" in macd.columns:
+                df["MACDh"] = macd["MACDh_12_26_9"]
     except Exception:
         pass
     return df
@@ -170,11 +177,11 @@ def ai_trend_report(df, code, trend_days, deepseek_key):
 """
     url = "https://api.deepseek.com/v1/chat/completions"  # 替换为你的DeepseeK实际API地址
     headers = {
-        "Authorization": f"Bearer {deepseek_key}",
+        "Authorization": f"Bearer {deepseek_key.strip()}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "deepseek-chat",  # 如有其它模型名按需替换
+        "model": "deepseek-chat",
         "messages": [
             {"role": "system", "content": "你是一位专业A股分析师。"},
             {"role": "user", "content": prompt}
@@ -213,7 +220,7 @@ with tab1:
         st.markdown("#### 🔥 今日热门概念板块排行（涨幅前20）")
         hot_boards = get_hot_concept_boards()
         if not hot_boards.empty:
-            st.dataframe(hot_boards, hide_index=True, use_container_width=True)
+            st.dataframe(hot_boards)
             selected_boards = st.multiselect("选择要检测的热门板块（可多选）", hot_boards["板块名称"].tolist())
             for board in selected_boards:
                 codes += get_board_stocks(board)
@@ -301,7 +308,6 @@ with tab1:
 
         # ========== 板块聚合展示 ==========
         st.subheader("📊 本批选股信号板块分布与明细")
-        # 1. 统计板块内信号股数量
         board2stocks = defaultdict(list)
         for r in result_table:
             for board in r["板块"].split("、"):
@@ -312,28 +318,16 @@ with tab1:
             hit = sum("无明显信号" not in s["信号"] for s in stock_list)
             board_signal_summary.append({"板块": board, "本批股票数": cnt, "信号股数": hit})
         df_board = pd.DataFrame(board_signal_summary).sort_values("信号股数", ascending=False)
-        st.dataframe(df_board, use_container_width=True)
+        st.dataframe(df_board)
 
-        # 2. 板块明细筛选
         selected_board = st.selectbox("查看板块内信号明细", df_board["板块"] if not df_board.empty else ["无板块"])
         df_detail = pd.DataFrame(board2stocks.get(selected_board, []))
         if not df_detail.empty:
-            st.dataframe(df_detail[["代码", "信号", "AI点评"]], use_container_width=True)
-            # 导出当前板块
-            st.download_button(
-                f"导出【{selected_board}】明细Excel",
-                data=df_detail.to_excel(index=False),
-                file_name=f"{selected_board}_AI选股明细.xlsx"
-            )
-        # 3. 所有明细也可全导出
-        st.download_button(
-            "导出本批次全部明细Excel",
-            data=pd.DataFrame(result_table).to_excel(index=False),
-            file_name="AI选股明细_全部板块.xlsx"
-        )
+            st.dataframe(df_detail[["代码", "信号", "AI点评"]])
     else:
         st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股+AI趋势点评，并可按板块自动聚合分析。")
 
+# ============= Tab2 =============
 with tab2:
     st.subheader("自定义股票池批量分析+AI智能点评")
     deepseek_key = st.text_input("请输入你的DeepseeK API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
@@ -354,19 +348,20 @@ with tab2:
         if "SMA_20" in df.columns:
             fig.add_trace(go.Scatter(x=df["date"], y=df["SMA_20"], mode='lines', name="SMA20"))
         fig.update_layout(title=f"{code} K线与均线", xaxis_rangeslider_visible=False, height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
         if "MACD" in df.columns:
             fig2 = go.Figure()
-            fig2.add_trace(go.Bar(x=df["date"], y=df["MACD"], name="MACD柱"))
+            if "MACDh" in df.columns:
+                fig2.add_trace(go.Bar(x=df["date"], y=df["MACDh"], name="MACD柱"))
             fig2.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD线"))
             fig2.add_trace(go.Scatter(x=df["date"], y=df["MACDs"], name="信号线"))
             fig2.update_layout(title="MACD指标", height=200)
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2)
         if "RSI_6" in df.columns:
             fig3 = go.Figure()
             fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_6"], name="RSI6"))
             fig3.update_layout(title="RSI指标", height=200, yaxis=dict(range=[0,100]))
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3)
 
     if st.button("批量分析", key="ai_btn"):
         codes = [c.strip() for c in codes_input.split(",") if c.strip()]
