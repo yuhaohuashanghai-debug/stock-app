@@ -6,9 +6,10 @@ import plotly.graph_objects as go
 from datetime import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import defaultdict
 
 st.set_page_config(page_title="A股批量智能技术分析 & AI趋势预测", layout="wide")
-st.title("📈 A股批量AI自动选股 & 智能趋势点评")
+st.title("📈 A股批量AI自动选股 & 板块信号聚合解读")
 
 # ============ 选股池工具函数 =============
 @st.cache_data(show_spinner=False)
@@ -42,6 +43,19 @@ def get_board_stocks(board_name):
         return df["代码"].tolist()
     except Exception:
         return []
+
+# ============ 板块归属映射 ============
+@st.cache_data(ttl=3600)
+def get_code_board_map():
+    try:
+        df = ak.stock_board_concept_cons_ths()
+        code2board = defaultdict(list)
+        for _, row in df.iterrows():
+            code2board[row['代码']].append(row['板块名称'])
+        return dict(code2board)
+    except Exception:
+        return {}
+code2board = get_code_board_map()
 
 # ============ 数据与指标函数 ============
 def fetch_ak_data(code, start_date):
@@ -169,10 +183,10 @@ def ai_trend_report(df, code, trend_days, openai_key):
         return f"AI分析调用失败：{ex}"
 
 # ============ 分批分页主界面 ============
-tab1, tab2 = st.tabs(["🪄 批量自动选股(分批)", "个股批量分析+AI点评"])
+tab1, tab2 = st.tabs(["🪄 批量自动选股(分批+板块聚合)", "个股批量分析+AI点评"])
 
 with tab1:
-    st.subheader("全市场/ETF/指数/概念池自动选股，支持分批分析")
+    st.subheader("全市场/ETF/指数/概念池自动选股，支持分批分析+板块聚合")
     market_pool = st.selectbox(
         "选择批量选股池",
         options=["全A股", "全ETF", "沪深300", "科创50", "热门概念板块", "自定义"],
@@ -234,7 +248,6 @@ with tab1:
         st.info("开始本批次数据分析…")
         result_table = []
         prog = st.progress(0, text="数据处理中…")
-        # 1. 多线程并发拉取K线数据
         def fetch_ak_data_safe(code, start_date):
             try:
                 df = fetch_ak_data(code, start_date)
@@ -250,7 +263,6 @@ with tab1:
                 prog.progress((i+1)/len(codes_this_batch), text=f"拉取进度：{i+1}/{len(codes_this_batch)}")
         prog.empty()
 
-        # 2. 信号判别和AI点评（仅对有信号股AI）
         for i, code in enumerate(codes_this_batch):
             df = result_dict.get(code, pd.DataFrame())
             if df.empty or len(df) < 25:
@@ -262,13 +274,16 @@ with tab1:
                 with st.spinner(f"AI分析{code}中..."):
                     ai_result = ai_trend_report(df, code, trend_days, openai_key)
                     time.sleep(1.2)  # 限速，防止被封
+            # 板块列表
+            board_list = code2board.get(code, ["未归属板块"])
             result_table.append({
                 "代码": code,
+                "板块": "、".join(board_list),
                 "信号": "、".join(signals) if signals else "无明显信号",
                 "明细解释": "\n".join(explain),
                 "AI点评": ai_result
             })
-            if i < 6 and signals:  # 展示部分进度
+            if i < 6 and signals:
                 st.markdown(f"#### 【{code}】选股信号：{'、'.join(signals) if signals else '无明显信号'}")
                 with st.expander("信号检测明细（点击展开）", expanded=False):
                     for line in explain:
@@ -276,23 +291,43 @@ with tab1:
                 if ai_result:
                     st.info(f"AI点评：{ai_result}")
 
-        # 3. 展示/导出结果
-        selected = [r for r in result_table if "无明显信号" not in r["信号"]]
-        if selected:
-            st.subheader("✅ 入选标的与信号（可全部导出，含AI点评）")
-            df_sel = pd.DataFrame(selected)
-            st.dataframe(df_sel[["代码","信号", "AI点评"]], use_container_width=True)
-            st.download_button(
-                "导出全部明细为Excel",
-                data=pd.DataFrame(result_table).to_excel(index=False),
-                file_name="AI选股明细.xlsx"
-            )
-        else:
-            st.warning("暂无标的触发选股信号，可切换批次、调整策略或换池。")
-    else:
-        st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股+AI趋势点评。")
+        # ========== 板块聚合展示 ==========
+        st.subheader("📊 本批选股信号板块分布与明细")
+        # 1. 统计板块内信号股数量
+        board2stocks = defaultdict(list)
+        for r in result_table:
+            for board in r["板块"].split("、"):
+                board2stocks[board].append(r)
+        board_signal_summary = []
+        for board, stock_list in board2stocks.items():
+            cnt = len(stock_list)
+            hit = sum("无明显信号" not in s["信号"] for s in stock_list)
+            board_signal_summary.append({"板块": board, "本批股票数": cnt, "信号股数": hit})
+        df_board = pd.DataFrame(board_signal_summary).sort_values("信号股数", ascending=False)
+        st.dataframe(df_board, use_container_width=True)
 
-# ======= tab2维持原有结构（可参考上面优化），略 =======
+        # 2. 板块明细筛选
+        selected_board = st.selectbox("查看板块内信号明细", df_board["板块"] if not df_board.empty else ["无板块"])
+        df_detail = pd.DataFrame(board2stocks.get(selected_board, []))
+        if not df_detail.empty:
+            st.dataframe(df_detail[["代码", "信号", "AI点评"]], use_container_width=True)
+            # 导出当前板块
+            st.download_button(
+                f"导出【{selected_board}】明细Excel",
+                data=df_detail.to_excel(index=False),
+                file_name=f"{selected_board}_AI选股明细.xlsx"
+            )
+        # 3. 所有明细也可全导出
+        st.download_button(
+            "导出本批次全部明细Excel",
+            data=pd.DataFrame(result_table).to_excel(index=False),
+            file_name="AI选股明细_全部板块.xlsx"
+        )
+    else:
+        st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股+AI趋势点评，并可按板块自动聚合分析。")
+
+# ============= Tab2 维持原有结构略 =============
+
 with tab2:
     st.subheader("自定义股票池批量分析+AI智能点评")
     openai_key = st.text_input("请输入你的OpenAI API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
