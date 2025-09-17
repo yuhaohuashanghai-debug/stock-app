@@ -1,6 +1,8 @@
-streamlit
-pandas
-pandas_ta
-akshare
-plotly
-requests
+streamlit==1.33.0
+pandas==2.2.2
+numpy==1.26.4
+plotly==5.22.0
+pandas-ta==0.3.14b0
+akshare==1.11.89
+requests>=2.31.0
+pyarrow==15.0.2
