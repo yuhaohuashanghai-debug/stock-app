@@ -306,7 +306,7 @@ with tab1:
                 if ai_result:
                     st.info(f"AI点评：{ai_result}")
 
-        # ========== 板块聚合展示 ==========
+              # ========== 板块聚合展示 ==========
         st.subheader("📊 本批选股信号板块分布与明细")
         board2stocks = defaultdict(list)
         for r in result_table:
@@ -317,15 +317,18 @@ with tab1:
             cnt = len(stock_list)
             hit = sum("无明显信号" not in s["信号"] for s in stock_list)
             board_signal_summary.append({"板块": board, "本批股票数": cnt, "信号股数": hit})
-        df_board = pd.DataFrame(board_signal_summary).sort_values("信号股数", ascending=False)
-        st.dataframe(df_board)
 
-        selected_board = st.selectbox("查看板块内信号明细", df_board["板块"] if not df_board.empty else ["无板块"])
-        df_detail = pd.DataFrame(board2stocks.get(selected_board, []))
-        if not df_detail.empty:
-            st.dataframe(df_detail[["代码", "信号", "AI点评"]])
-    else:
-        st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股+AI趋势点评，并可按板块自动聚合分析。")
+        df_board = pd.DataFrame(board_signal_summary)
+        if not df_board.empty and "信号股数" in df_board.columns:
+            df_board = df_board.sort_values("信号股数", ascending=False)
+            st.dataframe(df_board)
+            selected_board = st.selectbox(
+                "查看板块内信号明细", df_board["板块"].tolist() if not df_board.empty else ["无板块"])
+            df_detail = pd.DataFrame(board2stocks.get(selected_board, []))
+            if not df_detail.empty:
+                st.dataframe(df_detail[["代码", "信号", "AI点评"]])
+        else:
+            st.info("本批没有检测到任何信号股，或板块分布为空。")
 
 # ============= Tab2 =============
 with tab2:
