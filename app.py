@@ -58,7 +58,6 @@ def fetch_stock_news(code: str):
                 return df[col].head(5).tolist()
         return ["未找到新闻标题字段"]
     except Exception:
-        # fallback 热门新闻
         try:
             df = ak.stock_hot_rank_latest_em()
             return df["文章标题"].head(5).tolist()
@@ -71,7 +70,7 @@ def fetch_fund_flow(code: str):
         df = ak.stock_individual_fund_flow(stock=code)
         df = df.tail(5).reset_index(drop=True)
 
-        # 兼容不同字段名
+        # 自动识别字段
         for col in ["主力净流入", "主力净流入净额", "主力资金流入"]:
             if col in df.columns:
                 return df[["日期", col]].rename(columns={col: "主力净流入"}).to_dict("records")
@@ -115,23 +114,19 @@ def plot_chart(df: pd.DataFrame, code: str, indicator: str, show_ma: list, show_
                         vertical_spacing=0.05,
                         subplot_titles=(f"{code} K线图", "成交量", indicator))
 
-    # K线
     fig.add_trace(go.Candlestick(
         x=df["date"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="K线图"
     ), row=1, col=1)
 
-    # 均线
     if "MA5" in show_ma:
         fig.add_trace(go.Scatter(x=df["date"], y=df["MA5"], name="MA5"), row=1, col=1)
     if "MA20" in show_ma:
         fig.add_trace(go.Scatter(x=df["date"], y=df["MA20"], name="MA20"), row=1, col=1)
 
-    # 成交量
     if show_volume:
         fig.add_trace(go.Bar(x=df["date"], y=df["volume"], name="成交量", opacity=0.4), row=2, col=1)
 
-    # 下方指标
     if indicator == "MACD":
         fig.add_trace(go.Bar(x=df["date"], y=df["MACDh"], name="MACDh", opacity=0.3), row=3, col=1)
         fig.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD"), row=3, col=1)
@@ -195,7 +190,6 @@ if analyze_btn:
         df = fetch_realtime_kline(code)
         df = add_indicators(df, indicator)
 
-    # Tab 布局
     tab1, tab2, tab3, tab4 = st.tabs(["📈 图表", "📰 新闻", "💰 资金流", "🤖 AI/本地分析"])
 
     with tab1:
@@ -213,6 +207,8 @@ if analyze_btn:
         for f in fund_flow:
             if "主力净流入" in f:
                 st.write(f"{f['日期']} 主力净流入: {f['主力净流入']}")
+            else:
+                st.write(f)
 
     with tab4:
         latest = df.iloc[-1]
