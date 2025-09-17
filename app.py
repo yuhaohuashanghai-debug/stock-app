@@ -55,12 +55,15 @@ def fetch_fund_flow(code: str):
     except Exception as e:
         return [{"error": str(e)}]
 
-# ✅ 修正后的大盘行情接口
+# ✅ 指数行情（可选沪深300、上证指数、深证成指）
 @st.cache_data(ttl=300)
-def fetch_index_data(index_code="000300"):  # 默认沪深300
-    df = ak.index_zh_a_daily(symbol=index_code)
-    df.rename(columns={"date":"date","open":"open","close":"close",
-                       "high":"high","low":"low","volume":"volume"}, inplace=True)
+def fetch_index_data(index_code="000300"):
+    df_all = ak.index_zh_a_daily()
+    df = df_all[df_all["指数代码"] == index_code].copy()
+    if df.empty:
+        return pd.DataFrame()
+    df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
+                       "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
     df["date"] = pd.to_datetime(df["date"])
     return df
 
@@ -151,14 +154,14 @@ def compare_performance(stock_df, index_df, board_df):
     return stock_pct, index_pct, board_pct
 
 # ========== AI 概率预测 ==========
-def deepseek_probability_predict(tech_summary, fund_flow, news_list, perf_compare, api_key):
+def deepseek_probability_predict(tech_summary, fund_flow, news_list, perf_compare, api_key, index_name):
     stock_pct, index_pct, board_pct = perf_compare
     perf_text = f"""
 个股近5日涨幅: {stock_pct:.2f}%
-沪深300近5日涨幅: {index_pct:.2f}%
+{index_name}近5日涨幅: {index_pct:.2f}%
 板块近5日涨幅: {board_pct:.2f}%""" if board_pct is not None else f"""
 个股近5日涨幅: {stock_pct:.2f}%
-沪深300近5日涨幅: {index_pct:.2f}%
+{index_name}近5日涨幅: {index_pct:.2f}%
 板块数据: 暂无"""
 
     flow_text = "\n".join([f"{d['日期']} 主力净流入: {d['主力净流入']}" for d in fund_flow if "主力净流入" in d])
@@ -199,6 +202,10 @@ show_ma = st.multiselect("显示均线", ["MA5", "MA20"], default=["MA5", "MA20"
 show_volume = st.checkbox("显示成交量", value=True)
 indicator = st.selectbox("选择额外指标", ["MACD", "RSI", "BOLL", "KDJ"])
 
+# 新增：指数选择
+index_options = {"000300": "沪深300", "000001": "上证指数", "399001": "深证成指"}
+index_choice = st.selectbox("📊 选择对比指数", options=list(index_options.keys()), format_func=lambda x: index_options[x])
+
 if st.button("分析"):
     df = fetch_realtime_kline(code)
     df = add_indicators(df, indicator)
@@ -224,14 +231,14 @@ if st.button("分析"):
             st.write(f"{f['日期']} 主力净流入: {f['主力净流入']}")
 
     # 大盘 & 板块对比
-    index_df = fetch_index_data("000300")  # 沪深300
+    index_df = fetch_index_data(index_choice)
     board_name = get_stock_board(code)
     board_df = fetch_board_data(board_name) if board_name else None
     stock_pct, index_pct, board_pct = compare_performance(df, index_df, board_df)
 
-    st.subheader("📈 个股 vs 大盘 vs 板块")
+    st.subheader(f"📈 个股 vs {index_options[index_choice]} vs 板块")
     st.write(f"近5日个股涨幅: {stock_pct:.2f}%")
-    st.write(f"近5日沪深300涨幅: {index_pct:.2f}%")
+    st.write(f"近5日{index_options[index_choice]}涨幅: {index_pct:.2f}%")
     if board_df is not None:
         st.write(f"近5日{board_name}板块涨幅: {board_pct:.2f}%")
     else:
@@ -240,7 +247,7 @@ if st.button("分析"):
     # AI 综合预测
     if DEEPSEEK_API_KEY:
         with st.spinner("DeepSeek AI 概率预测中..."):
-            ai_text = deepseek_probability_predict(summary, fund_flow, news_list, (stock_pct, index_pct, board_pct), DEEPSEEK_API_KEY)
+            ai_text = deepseek_probability_predict(summary, fund_flow, news_list, (stock_pct, index_pct, board_pct), DEEPSEEK_API_KEY, index_options[index_choice])
             st.subheader("📊 AI 趋势概率预测")
             st.write(ai_text)
     else:
