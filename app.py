@@ -5,72 +5,38 @@ import akshare as ak
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
 
 # ========== 页面配置 ==========
-st.set_page_config(page_title="📈 实时股票分析平台", layout="wide")
-st.title("📊 实时股票技术分析 + 消息面 + AI 趋势预测")
+st.set_page_config(page_title="📈 实时股票AI分析平台", layout="wide")
+st.title("📊 实时股票技术分析 + 资金流向 + 消息面 + AI 趋势概率预测")
 
 # ========== API Key 输入 ==========
 DEEPSEEK_API_KEY = st.text_input("请输入 DeepSeek API Key（留空则只做本地技术点评）", type="password")
 DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# ========== DeepSeek 请求函数 ==========
-def deepseek_commentary(tech_summary: str, news_list: list, api_key: str):
-    news_text = "\n".join([f"- {n}" for n in news_list]) if news_list else "无相关新闻"
-    prompt = f"""
-以下是某只股票的最新情况，请结合技术指标与消息面综合点评，并预测短期趋势（上涨/震荡/下跌）：
-
-【技术面】
-{tech_summary}
-
-【消息面】
-{news_text}
-"""
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 600,
-        "temperature": 0.7
-    }
-
-    session = requests.Session()
-    retries = Retry(total=3, backoff_factor=2, status_forcelist=[500, 502, 503, 504])
-    session.mount("https://", HTTPAdapter(max_retries=retries))
-
-    try:
-        resp = session.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=60)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"DeepSeek 分析出错: {e}"
-
-# ========== 行情数据（日K） ==========
+# ========== 数据获取函数 ==========
 @st.cache_data(ttl=300)
 def fetch_realtime_kline(code: str):
     if code.startswith("6"):
         symbol = f"sh{code}"
     else:
         symbol = f"sz{code}"
-
     df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
     df = df.reset_index()
+    df["date"] = pd.to_datetime(df["date"])
     df.rename(columns={
-        "date": "date",
-        "open": "open",
-        "close": "close",
-        "high": "high",
-        "low": "low",
-        "volume": "volume"
+        "date": "date", "open": "open", "close": "close",
+        "high": "high", "low": "low", "volume": "volume"
     }, inplace=True)
     return df
 
-# ========== 新闻接口 ==========
+@st.cache_data(ttl=300)
+def fetch_intraday_kline(code: str, period="60"):
+    df = ak.stock_zh_a_hist(symbol=code, period=period, start_date="20240101", adjust="qfq")
+    df.rename(columns={"日期":"date","开盘":"open","收盘":"close","最高":"high","最低":"low","成交量":"volume"}, inplace=True)
+    df["date"] = pd.to_datetime(df["date"])
+    return df.tail(120)
+
 @st.cache_data(ttl=300)
 def fetch_stock_news(code: str):
     try:
@@ -81,6 +47,14 @@ def fetch_stock_news(code: str):
         return ["未找到新闻标题字段"]
     except Exception as e:
         return [f"新闻获取失败: {e}"]
+
+@st.cache_data(ttl=300)
+def fetch_fund_flow(code: str):
+    try:
+        df = ak.stock_individual_fund_flow(stock=code)
+        return df.tail(5)[["日期","主力净流入"]].to_dict("records")
+    except Exception as e:
+        return [{"error": str(e)}]
 
 # ========== 技术指标 ==========
 def add_indicators(df: pd.DataFrame, indicator: str):
@@ -108,20 +82,19 @@ def add_indicators(df: pd.DataFrame, indicator: str):
         df["D"] = kdj["STOCHd_14_3_3"]
         df["J"] = 3 * df["K"] - 2 * df["D"]
 
-    return df
+    return df.dropna()
 
-# ========== 绘制图表 ==========
+# ========== 图表绘制 ==========
 def plot_chart(df: pd.DataFrame, code: str, indicator: str, show_ma: list, show_volume: bool):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                         row_heights=[0.7, 0.3],
                         vertical_spacing=0.05,
                         subplot_titles=(f"{code} K线及指标", indicator))
 
-    # 主图 K线
+    # K线
     fig.add_trace(go.Candlestick(
         x=df["date"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"],
-        name="K线图"
+        low=df["low"], close=df["close"], name="K线图"
     ), row=1, col=1)
 
     # 均线
@@ -153,6 +126,43 @@ def plot_chart(df: pd.DataFrame, code: str, indicator: str, show_ma: list, show_
     fig.update_layout(height=900, xaxis_rangeslider_visible=False, showlegend=True)
     return fig
 
+# ========== AI 概率预测 ==========
+def deepseek_probability_predict(tech_summary: str, fund_flow: list, news_list: list, api_key: str):
+    news_text = "\n".join([f"- {n}" for n in news_list]) if news_list else "无相关新闻"
+    flow_text = "\n".join([f"{d['日期']} 主力净流入: {d['主力净流入']}" for d in fund_flow if "主力净流入" in d])
+
+    prompt = f"""
+以下是某只股票的多维度数据，请结合日线+60分钟K线趋势、资金流向、技术指标和新闻，给出未来3日内的趋势概率预测：
+- 上涨概率（%）
+- 震荡概率（%）
+- 下跌概率（%）
+并简要说明原因。
+
+【技术面】  
+{tech_summary}
+
+【资金流向】  
+{flow_text if flow_text else "暂无资金流数据"}
+
+【消息面】  
+{news_text}
+"""
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 600,
+        "temperature": 0.5
+    }
+
+    try:
+        resp = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=60)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"DeepSeek 概率预测出错: {e}"
+
 # ========== 主程序 ==========
 code = st.text_input("请输入股票代码（如 600519）", "600519")
 
@@ -180,11 +190,18 @@ if st.button("分析"):
     for n in news_list:
         st.write("- " + n)
 
+    # 资金流向
+    fund_flow = fetch_fund_flow(code)
+    st.subheader("💰 资金流向（近5日）")
+    for f in fund_flow:
+        if "主力净流入" in f:
+            st.write(f"{f['日期']} 主力净流入: {f['主力净流入']}")
+
     # AI 分析 or 本地点评
     if DEEPSEEK_API_KEY:
-        with st.spinner("DeepSeek AI 综合分析中..."):
-            ai_text = deepseek_commentary(summary, news_list, DEEPSEEK_API_KEY)
-            st.subheader("🤖 AI 综合分析与趋势预测")
+        with st.spinner("DeepSeek AI 概率预测中..."):
+            ai_text = deepseek_probability_predict(summary, fund_flow, news_list, DEEPSEEK_API_KEY)
+            st.subheader("📊 AI 趋势概率预测")
             st.write(ai_text)
     else:
         st.subheader("🤖 本地技术面点评")
