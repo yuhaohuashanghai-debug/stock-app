@@ -83,14 +83,11 @@ def fetch_fund_flow(code: str):
 def fetch_stock_concepts(code: str):
     try:
         all_concepts = ak.stock_board_concept_name_ths()
-
-        # 兼容不同版本字段
+        # 自动识别字段
         if "名称" in all_concepts.columns:
             concept_col = "名称"
         elif "板块名称" in all_concepts.columns:
             concept_col = "板块名称"
-        elif "name" in all_concepts.columns:
-            concept_col = "name"
         else:
             return [f"未找到板块字段，现有字段: {all_concepts.columns.tolist()}"]
 
@@ -100,45 +97,29 @@ def fetch_stock_concepts(code: str):
                 cons = ak.stock_board_concept_cons_ths(symbol=name)
                 if "代码" in cons.columns and code in cons["代码"].tolist():
                     result.append(name)
-                elif "code" in cons.columns and code in cons["code"].tolist():
-                    result.append(name)
             except:
                 continue
-
-        return result if result else ["未找到所属概念板块"]
-
+        return result
     except Exception as e:
         return [f"获取板块失败: {e}"]
-
 
 @st.cache_data(ttl=300)
 def fetch_concept_fund_flow():
     try:
         df = ak.stock_board_concept_fund_flow_ths()
-
-        # 兼容板块名称字段
         if "板块名称" not in df.columns:
-            if "name" in df.columns:
-                df.rename(columns={"name": "板块名称"}, inplace=True)
-            elif df.columns[0]:
-                df.rename(columns={df.columns[0]: "板块名称"}, inplace=True)
-
-        # 兼容资金流字段
+            df.rename(columns={df.columns[0]: "板块名称"}, inplace=True)
         if "主力净流入" not in df.columns:
             for col in df.columns:
-                if "净流入" in col or "inflow" in col.lower():
+                if "净流入" in col:
                     df.rename(columns={col: "主力净流入"}, inplace=True)
                     break
-
-        # 兼容涨跌幅字段
         if "涨跌幅" not in df.columns:
             for col in df.columns:
-                if "涨跌" in col or "percent" in col.lower():
+                if "涨跌" in col:
                     df.rename(columns={col: "涨跌幅"}, inplace=True)
                     break
-
         return df
-
     except Exception as e:
         return pd.DataFrame({"error": [str(e)]})
 
@@ -299,26 +280,14 @@ if analyze_btn:
                     st.write("RSI 中性，市场震荡。")
 
     with tab5:
-    st.subheader("📊 板块概念联动分析")
-    concepts = fetch_stock_concepts(code)
-    st.write("🔍 调试：concepts 返回结果 →", concepts)
-
-    flow_df = fetch_concept_fund_flow()
-    st.write("🔍 调试：fund_flow 字段 →", flow_df.columns.tolist())
-
-    if concepts and isinstance(concepts, list) and not concepts[0].startswith("获取板块失败"):
-        st.write("所属概念板块:", "、".join(concepts))
-        if not flow_df.empty and "error" not in flow_df.columns:
-            flow_df = flow_df[flow_df["板块名称"].isin(concepts)]
-            if not flow_df.empty:
-                flow_df["主力净流入"] = flow_df["主力净流入"].apply(format_money)
-                st.dataframe(flow_df[["板块名称", "涨跌幅", "主力净流入"]])
-            else:
-                st.write("暂无板块资金流数据")
-        else:
-            st.write("板块资金流获取失败")
-    else:
-        st.write("未找到相关概念板块")
+        st.subheader("📊 板块概念联动分析")
+        concepts = fetch_stock_concepts(code)
+        if concepts:
+            st.write("所属概念板块:", "、".join(concepts))
+            flow_df = fetch_concept_fund_flow()
+            if not flow_df.empty and "error" not in flow_df.columns:
+                flow_df = flow_df[flow_df["板块名称"].isin(concepts)]
+                if not flow_df.empty:
                     # 数值化并排序
                     flow_df["主力净流入数值"] = pd.to_numeric(flow_df["主力净流入"], errors="coerce")
                     flow_df["涨跌幅数值"] = pd.to_numeric(flow_df["涨跌幅"], errors="coerce")
