@@ -83,11 +83,14 @@ def fetch_fund_flow(code: str):
 def fetch_stock_concepts(code: str):
     try:
         all_concepts = ak.stock_board_concept_name_ths()
-        # 自动识别字段
+
+        # 兼容不同字段
         if "名称" in all_concepts.columns:
             concept_col = "名称"
         elif "板块名称" in all_concepts.columns:
             concept_col = "板块名称"
+        elif "name" in all_concepts.columns:
+            concept_col = "name"
         else:
             return [f"未找到板块字段，现有字段: {all_concepts.columns.tolist()}"]
 
@@ -97,29 +100,45 @@ def fetch_stock_concepts(code: str):
                 cons = ak.stock_board_concept_cons_ths(symbol=name)
                 if "代码" in cons.columns and code in cons["代码"].tolist():
                     result.append(name)
+                elif "code" in cons.columns and code in cons["code"].tolist():
+                    result.append(name)
             except:
                 continue
-        return result
+
+        return result if result else ["未找到所属概念板块"]
+
     except Exception as e:
         return [f"获取板块失败: {e}"]
+
 
 @st.cache_data(ttl=300)
 def fetch_concept_fund_flow():
     try:
         df = ak.stock_board_concept_fund_flow_ths()
+
+        # 兼容板块字段
         if "板块名称" not in df.columns:
-            df.rename(columns={df.columns[0]: "板块名称"}, inplace=True)
+            if "name" in df.columns:
+                df.rename(columns={"name": "板块名称"}, inplace=True)
+            else:
+                df.rename(columns={df.columns[0]: "板块名称"}, inplace=True)
+
+        # 兼容资金流字段
         if "主力净流入" not in df.columns:
             for col in df.columns:
-                if "净流入" in col:
+                if "净流入" in col or "inflow" in col.lower():
                     df.rename(columns={col: "主力净流入"}, inplace=True)
                     break
+
+        # 兼容涨跌幅字段
         if "涨跌幅" not in df.columns:
             for col in df.columns:
-                if "涨跌" in col:
+                if "涨跌" in col or "percent" in col.lower():
                     df.rename(columns={col: "涨跌幅"}, inplace=True)
                     break
+
         return df
+
     except Exception as e:
         return pd.DataFrame({"error": [str(e)]})
 
