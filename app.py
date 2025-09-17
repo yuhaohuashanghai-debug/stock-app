@@ -334,7 +334,6 @@ with tab1:
     else:
         st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股+AI趋势点评，并可按板块自动聚合分析。")
 
-# ============= Tab2 =============
 with tab2:
     st.subheader("自定义股票池批量分析+AI智能点评")
     deepseek_key = st.text_input("请输入你的DeepseeK API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
