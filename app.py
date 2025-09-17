@@ -40,16 +40,28 @@ def deepseek_commentary(tech_summary: str):
         return f"DeepSeek 分析出错: {e}"
 
 # ========== 调取实时数据 ==========
-@st.cache_data(ttl=300)  # 缓存5分钟
+@st.cache_data(ttl=300)
 def fetch_realtime_kline(code: str):
     """
-    直接调取新浪财经的实时日K数据
-    code: 股票代码, 例如 "600519"
+    使用新浪财经接口获取日K数据
+    code: 股票代码，例如 "600519" 或 "000001"
     """
-    df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date="20240101", adjust="qfq")
-    df.rename(columns={"日期":"date", "开盘":"open", "收盘":"close",
-                       "最高":"high", "最低":"low", "成交量":"volume"}, inplace=True)
-    df["date"] = pd.to_datetime(df["date"])
+    # 补充交易所前缀
+    if code.startswith("6"):
+        symbol = f"sh{code}"
+    else:
+        symbol = f"sz{code}"
+
+    df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
+    df = df.reset_index()
+    df.rename(columns={
+        "date": "date",
+        "open": "open",
+        "close": "close",
+        "high": "high",
+        "low": "low",
+        "volume": "volume"
+    }, inplace=True)
     return df
 
 # ========== 技术指标 ==========
