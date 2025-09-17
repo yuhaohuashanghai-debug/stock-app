@@ -55,11 +55,12 @@ def fetch_fund_flow(code: str):
     except Exception as e:
         return [{"error": str(e)}]
 
+# ✅ 修正后的大盘行情接口
 @st.cache_data(ttl=300)
 def fetch_index_data(index_code="000300"):  # 默认沪深300
-    df = ak.index_zh_a_hist(symbol=index_code, period="daily", start_date="20240101", adjust="qfq")
-    df.rename(columns={"日期":"date","开盘":"open","收盘":"close",
-                       "最高":"high","最低":"low","成交量":"volume"}, inplace=True)
+    df = ak.index_zh_a_daily(symbol=index_code)
+    df.rename(columns={"date":"date","open":"open","close":"close",
+                       "high":"high","low":"low","volume":"volume"}, inplace=True)
     df["date"] = pd.to_datetime(df["date"])
     return df
 
