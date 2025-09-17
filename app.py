@@ -70,12 +70,21 @@ def fetch_fund_flow(code: str):
         df = ak.stock_individual_fund_flow(stock=code)
         df = df.tail(5).reset_index(drop=True)
 
-        # 自动识别字段
-        for col in ["主力净流入", "主力净流入净额", "主力资金流入"]:
+        # 调试：打印所有字段
+        st.write("资金流原始数据：", df.head())
+
+        # 遍历常见字段名
+        candidate_cols = [
+            "主力净流入", "主力净流入净额", "主力资金流入", 
+            "主力资金净流入", "大单净流入", "超大单净流入净额"
+        ]
+        for col in candidate_cols:
             if col in df.columns:
                 return df[["日期", col]].rename(columns={col: "主力净流入"}).to_dict("records")
 
-        return [{"error": "未找到主力净流入相关字段"}]
+        # 如果没有匹配字段，返回所有字段名方便排查
+        return [{"error": f"未找到主力净流入相关字段，现有字段: {df.columns.tolist()}"}]
+
     except Exception as e:
         return [{"error": str(e)}]
 
