@@ -87,6 +87,19 @@ def fetch_fund_flow(code: str):
     except Exception as e:
         return [{"error": str(e)}]
 
+# ========== 金额格式化 ==========
+def format_money(x):
+    try:
+        x = float(x)
+        if abs(x) >= 1e8:
+            return f"{x/1e8:.2f} 亿"
+        elif abs(x) >= 1e4:
+            return f"{x/1e4:.2f} 万"
+        else:
+            return f"{x:.0f}"
+    except:
+        return str(x)
+
 # ========== 技术指标 ==========
 def add_indicators(df: pd.DataFrame, indicator: str):
     df["MA5"] = ta.sma(df["close"], length=5)
@@ -158,7 +171,7 @@ DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 
 def deepseek_probability_predict(tech_summary: str, fund_flow: list, news_list: list, api_key: str):
     news_text = "\n".join([f"- {n}" for n in news_list]) if news_list else "无相关新闻"
-    flow_text = "\n".join([f"{d['日期']} 主力净流入: {d['主力净流入']}" for d in fund_flow if "主力净流入" in d])
+    flow_text = "\n".join([f"{d['日期']} 主力净流入: {format_money(d['主力净流入'])}" for d in fund_flow if "主力净流入" in d])
 
     prompt = f"""
 以下是某只股票的多维度数据，请结合日线趋势、资金流向、技术指标和新闻，给出未来3日内的趋势概率预测：
@@ -214,7 +227,9 @@ if analyze_btn:
         st.subheader("💰 资金流向（近5日）")
         for f in fund_flow:
             if "主力净流入" in f:
-                st.write(f"{f['日期']} 主力净流入: {f['主力净流入']}")
+                val = format_money(f["主力净流入"])
+                prefix = "+" if f["主力净流入"] > 0 else ""
+                st.write(f"{f['日期']} 主力净流入: {prefix}{val}")
             else:
                 st.write(f)
 
