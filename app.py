@@ -7,6 +7,7 @@ from datetime import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
+import requests
 
 st.set_page_config(page_title="A股批量智能技术分析 & AI趋势预测", layout="wide")
 st.title("📈 A股批量AI自动选股 & 板块信号聚合解读")
@@ -157,30 +158,37 @@ def signal_with_explain(df):
         explain.append("【20日新低】：数据不足，无法判断。")
     return signals, explain
 
-def ai_trend_report(df, code, trend_days, openai_key):
-    if not openai_key:
-        return ""
+# ============ DeepseeK AI调用 ============
+def ai_trend_report(df, code, trend_days, deepseek_key):
+    if not deepseek_key:
+        return "未填写DeepseeK KEY，无法生成AI趋势预测。"
     use_df = df.tail(60)[["date", "open", "close", "high", "low", "volume"]]
     data_str = use_df.to_csv(index=False)
     prompt = f"""
 你是一位A股专业量化分析师。以下是{code}最近60日的每日行情（日期,开盘,收盘,最高,最低,成交量），请根据技术走势、成交量变化，预测该股未来{trend_days}日的涨跌趋势，并判断是否存在启动信号、买卖机会，请以精炼中文输出一份点评。数据如下（csv格式）：
 {data_str}
 """
+    url = "https://api.deepseek.com/v1/chat/completions"  # 替换为你的DeepseeK实际API地址
+    headers = {
+        "Authorization": f"Bearer {deepseek_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "deepseek-chat",  # 如有其它模型名按需替换
+        "messages": [
+            {"role": "system", "content": "你是一位专业A股分析师。"},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 400,
+        "temperature": 0.6,
+    }
     try:
-        import openai
-        client = openai.OpenAI(api_key=openai_key)
-        chat_completion = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "你是一位专业A股分析师。"},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=400,
-            temperature=0.6,
-        )
-        return chat_completion.choices[0].message.content
+        r = requests.post(url, headers=headers, json=payload, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        return data["choices"][0]["message"]["content"]
     except Exception as ex:
-        return f"AI分析调用失败：{ex}"
+        return f"DeepseeK分析调用失败：{ex}"
 
 # ============ 分批分页主界面 ============
 tab1, tab2 = st.tabs(["🪄 批量自动选股(分批+板块聚合)", "个股批量分析+AI点评"])
@@ -238,7 +246,7 @@ with tab1:
     st.info(f"本批共{len(codes_this_batch)}只，股票池共{len(codes)}只。")
 
     start_date = st.date_input("起始日期", value=pd.to_datetime("2024-01-01"), key="pick_start")
-    openai_key = st.text_input("如需AI批量趋势点评，请输入OpenAI KEY", type="password", key="tab1_ai_key")
+    deepseek_key = st.text_input("如需AI批量趋势点评，请输入DeepseeK KEY", type="password", key="tab1_ai_key")
     ai_batch = st.toggle("批量AI智能点评", value=True, key="ai_batch_tab1")
     trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1, key="tab1_trend_days")
     btn = st.button("本批次一键自动选股", key="btn_pick")
@@ -270,9 +278,9 @@ with tab1:
             df = calc_indicators(df)
             signals, explain = signal_with_explain(df)
             ai_result = ""
-            if ai_batch and openai_key and signals:
+            if ai_batch and deepseek_key and signals:
                 with st.spinner(f"AI分析{code}中..."):
-                    ai_result = ai_trend_report(df, code, trend_days, openai_key)
+                    ai_result = ai_trend_report(df, code, trend_days, deepseek_key)
                     time.sleep(1.2)  # 限速，防止被封
             # 板块列表
             board_list = code2board.get(code, ["未归属板块"])
@@ -326,15 +334,15 @@ with tab1:
     else:
         st.markdown("> 支持全A股、ETF、指数成分、热门池一键分批自动选股+AI趋势点评，并可按板块自动聚合分析。")
 
-# ============= Tab2 维持原有结构略 =============
-
+# ============= Tab2 =============
 with tab2:
     st.subheader("自定义股票池批量分析+AI智能点评")
-    openai_key = st.text_input("请输入你的OpenAI API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
+    deepseek_key = st.text_input("请输入你的DeepseeK API KEY（用于AI点评/趋势预测）", type="password", key="ai_key")
     codes_input = st.text_input("请输入A股股票代码（支持批量,如 600519,000977,588170）：", value="000977,518880", key="ai_codes")
     start_date = st.date_input("选择起始日期", value=datetime.now().replace(year=2025, month=9, day=4), key="ai_date")
     ai_enable = st.toggle("启用AI趋势点评", value=True, key="ai_toggle")
     trend_days = st.selectbox("AI预测未来天数", options=[1, 3, 5, 7], index=1, key="ai_trend_days")
+
     def plot_kline(df, code):
         fig = go.Figure()
         fig.add_trace(go.Candlestick(
@@ -350,7 +358,7 @@ with tab2:
         st.plotly_chart(fig, use_container_width=True)
         if "MACD" in df.columns:
             fig2 = go.Figure()
-            fig2.add_trace(go.Bar(x=df["date"], y=df["MACDh"], name="MACD柱"))
+            fig2.add_trace(go.Bar(x=df["date"], y=df["MACD"], name="MACD柱"))
             fig2.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD线"))
             fig2.add_trace(go.Scatter(x=df["date"], y=df["MACDs"], name="信号线"))
             fig2.update_layout(title="MACD指标", height=200)
@@ -358,33 +366,8 @@ with tab2:
         if "RSI_6" in df.columns:
             fig3 = go.Figure()
             fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_6"], name="RSI6"))
-            fig3.add_trace(go.Scatter(x=df["date"], y=df["RSI_12"], name="RSI12"))
             fig3.update_layout(title="RSI指标", height=200, yaxis=dict(range=[0,100]))
             st.plotly_chart(fig3, use_container_width=True)
-    def ai_trend_report(df, code, trend_days, openai_key):
-        if not openai_key:
-            return "未填写OpenAI KEY，无法生成AI趋势预测。"
-        use_df = df.tail(60)[["date", "open", "close", "high", "low", "volume"]]
-        data_str = use_df.to_csv(index=False)
-        prompt = f"""
-你是一位A股专业量化分析师。以下是{code}最近60日的每日行情（日期,开盘,收盘,最高,最低,成交量），请根据技术走势、成交量变化，预测该股未来{trend_days}日的涨跌趋势，并判断是否存在启动信号、买卖机会，请以精炼中文输出一份点评。数据如下（csv格式）：
-{data_str}
-"""
-        try:
-            import openai
-            client = openai.OpenAI(api_key=openai_key)
-            chat_completion = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "你是一位专业A股分析师。"},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=400,
-                temperature=0.6,
-            )
-            return chat_completion.choices[0].message.content
-        except Exception as ex:
-            return f"AI分析调用失败：{ex}"
 
     if st.button("批量分析", key="ai_btn"):
         codes = [c.strip() for c in codes_input.split(",") if c.strip()]
@@ -399,8 +382,8 @@ with tab2:
             plot_kline(df, code)
             if ai_enable:
                 with st.spinner(f"AI分析{code}中..."):
-                    ai_report = ai_trend_report(df, code, trend_days, openai_key)
+                    ai_report = ai_trend_report(df, code, trend_days, deepseek_key)
                     st.info(ai_report)
             st.divider()
     else:
-        st.markdown("> 支持多只A股代码批量技术分析+AI自动点评（如需AI预测请填写OpenAI KEY）")
+        st.markdown("> 支持多只A股代码批量技术分析+AI自动点评（如需AI预测请填写DeepseeK KEY）")
