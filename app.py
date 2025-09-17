@@ -10,15 +10,29 @@ import requests
 st.set_page_config(page_title="📈 实时股票AI分析平台", layout="wide")
 st.title("📊 实时股票技术分析 + 资金流向 + 消息面 + AI 趋势概率预测")
 
-# ========== API Key 输入 ==========
-# ========== API Key 输入 ==========  
+# ========== 左侧控制面板 ==========  
 with st.sidebar:  
-    st.header("🔑 配置")  
-    with st.expander("API Key 设置", expanded=False):  
+    st.header("⚙️ 控制面板")  
+
+# ========== 基础设置 ==========  
+    with st.expander("📌 基础设置", expanded=True):  
+        code = st.text_input("股票代码（如 600519）", "600519")  
+        show_volume = st.checkbox("显示成交量", value=True)  
+
+    # ========== 指标设置 ==========  
+    with st.expander("📊 指标设置", expanded=True):  
+        show_ma = st.multiselect("显示均线", ["MA5", "MA20"], default=["MA5", "MA20"])  
+        indicator = st.selectbox("选择额外指标", ["MACD", "RSI", "BOLL", "KDJ"])  
+
+# ========== AI 设置 ==========  
+    with st.expander("🤖 AI 设置", expanded=False):  
         DEEPSEEK_API_KEY = st.text_input(  
             "请输入 DeepSeek API Key（留空则只做本地技术点评）",  
             type="password"  
         )  
+
+    # 分析按钮  
+    analyze_btn = st.button("🚀 开始分析")  
 
 # ========== 数据获取函数 ==========
 @st.cache_data(ttl=300)
