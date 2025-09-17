@@ -1,8 +1,7 @@
-streamlit>=1.32.0
-pandas>=2.0.0
-numpy>=1.24.0
-pandas_ta>=0.3.14b
-akshare>=1.13.92
-plotly>=5.20.0
-openai>=1.40.0
-tqdm>=4.65.0
+streamlit
+akshare
+pandas
+pandas_ta
+plotly
+requests
+openpyxl
