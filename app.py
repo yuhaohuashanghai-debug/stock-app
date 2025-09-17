@@ -35,16 +35,33 @@ with st.sidebar:
 # ========== 数据获取函数 ==========
 @st.cache_data(ttl=300)
 def fetch_kline(code: str, period="daily", start_date="20240101"):
+    """
+    获取新浪日线或分钟K线数据
+    code: 股票代码（如 '600519'）
+    period: 'daily' 表示日线, '60' 表示60分钟线
+    """
     try:
-        df = ak.stock_zh_a_hist(symbol=code, period=period, start_date=start_date, adjust="qfq")
+        # 判断市场前缀
+        if code.startswith("6"):
+            symbol = f"sh{code}"
+        else:
+            symbol = f"sz{code}"
+
+        if period == "daily":
+            # 新浪前复权日线
+            df = ak.stock_zh_a_daily_qfq(symbol=symbol)
+        else:
+            # 分钟线 (period 可选 '1','5','15','30','60')
+            df = ak.stock_zh_a_minute(symbol=symbol, period=period)
+
         df.rename(columns={
-            "日期": "date", "开盘": "open", "收盘": "close",
-            "最高": "high", "最低": "low", "成交量": "volume"
+            "date": "date", "open": "open", "close": "close",
+            "high": "high", "low": "low", "volume": "volume"
         }, inplace=True)
         df["date"] = pd.to_datetime(df["date"])
         return df
     except Exception as e:
-        st.error(f"数据获取失败: {e}")
+        st.error(f"新浪数据获取失败: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=300)
