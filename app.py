@@ -21,19 +21,17 @@ def fetch_realtime_kline(code: str):
         symbol = f"sh{code}"
     else:
         symbol = f"sz{code}"
-    df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
-    df = df.reset_index()
+    df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date="20240101", adjust="qfq")
+    df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
+                       "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
     df["date"] = pd.to_datetime(df["date"])
-    df.rename(columns={
-        "date": "date", "open": "open", "close": "close",
-        "high": "high", "low": "low", "volume": "volume"
-    }, inplace=True)
     return df
 
 @st.cache_data(ttl=300)
 def fetch_intraday_kline(code: str, period="60"):
     df = ak.stock_zh_a_hist(symbol=code, period=period, start_date="20240101", adjust="qfq")
-    df.rename(columns={"日期":"date","开盘":"open","收盘":"close","最高":"high","最低":"low","成交量":"volume"}, inplace=True)
+    df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
+                       "最高": "high", "最低": "low", "成交量": "volume"}, inplace=True)
     df["date"] = pd.to_datetime(df["date"])
     return df.tail(120)
 
@@ -52,7 +50,7 @@ def fetch_stock_news(code: str):
 def fetch_fund_flow(code: str):
     try:
         df = ak.stock_individual_fund_flow(stock=code)
-        return df.tail(5)[["日期","主力净流入"]].to_dict("records")
+        return df.tail(5)[["日期", "主力净流入"]].to_dict("records")
     except Exception as e:
         return [{"error": str(e)}]
 
@@ -84,47 +82,85 @@ def add_indicators(df: pd.DataFrame, indicator: str):
 
     return df.dropna()
 
-# ========== 图表绘制 ==========
+# ========== 图表绘制（升级版三行布局） ==========
 def plot_chart(df: pd.DataFrame, code: str, indicator: str, show_ma: list, show_volume: bool):
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                        row_heights=[0.7, 0.3],
-                        vertical_spacing=0.05,
-                        subplot_titles=(f"{code} K线及指标", indicator))
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True,
+        row_heights=[0.6, 0.2, 0.2],
+        vertical_spacing=0.05,
+        subplot_titles=(f"{code} K线图", "成交量", indicator)
+    )
 
-    # K线
+    # --- K线 ---
     fig.add_trace(go.Candlestick(
         x=df["date"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="K线图"
     ), row=1, col=1)
 
-    # 均线
+    # --- 均线 ---
     if "MA5" in show_ma:
         fig.add_trace(go.Scatter(x=df["date"], y=df["MA5"], name="MA5"), row=1, col=1)
     if "MA20" in show_ma:
         fig.add_trace(go.Scatter(x=df["date"], y=df["MA20"], name="MA20"), row=1, col=1)
 
-    # 成交量
+    # --- 成交量 ---
     if show_volume:
-        fig.add_trace(go.Bar(x=df["date"], y=df["volume"], name="成交量", opacity=0.4), row=1, col=1)
+        fig.add_trace(go.Bar(x=df["date"], y=df["volume"], name="成交量", opacity=0.4), row=2, col=1)
 
-    # 下方指标
+    # --- 技术指标 ---
     if indicator == "MACD":
-        fig.add_trace(go.Bar(x=df["date"], y=df["MACDh"], name="MACDh", opacity=0.3), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["MACDs"], name="信号线"), row=2, col=1)
+        fig.add_trace(go.Bar(x=df["date"], y=df["MACDh"], name="MACDh", opacity=0.3), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MACD"], name="MACD"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MACDs"], name="信号线"), row=3, col=1)
     elif indicator == "RSI":
-        fig.add_trace(go.Scatter(x=df["date"], y=df["RSI"], name="RSI"), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["RSI"], name="RSI"), row=3, col=1)
     elif indicator == "BOLL":
         fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_U"], name="上轨"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_M"], name="中轨"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df["date"], y=df["BOLL_L"], name="下轨"), row=1, col=1)
     elif indicator == "KDJ":
-        fig.add_trace(go.Scatter(x=df["date"], y=df["K"], name="K"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["D"], name="D"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["J"], name="J"), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["K"], name="K"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["D"], name="D"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["J"], name="J"), row=3, col=1)
 
-    fig.update_layout(height=900, xaxis_rangeslider_visible=False, showlegend=True)
+    fig.update_layout(height=1000, xaxis_rangeslider_visible=False, showlegend=True)
     return fig
+
+# ========== 本地技术点评增强 ==========
+def local_comment(indicator: str, latest: pd.Series):
+    if indicator == "MACD":
+        if latest["MACD"] > latest["MACDs"]:
+            return "MACD 金叉，短期有反弹可能。"
+        elif latest["MACD"] < latest["MACDs"]:
+            return "MACD 死叉，下行动能偏强。"
+        else:
+            return "MACD 持平，市场观望情绪。"
+
+    elif indicator == "RSI":
+        if latest["RSI"] < 30:
+            return "RSI < 30，进入超卖区域，存在反弹机会。"
+        elif latest["RSI"] > 70:
+            return "RSI > 70，进入超买区域，存在回调风险。"
+        else:
+            return "RSI 位于中性区间，走势偏震荡。"
+
+    elif indicator == "BOLL":
+        if latest["close"] >= latest["BOLL_U"]:
+            return "股价触及布林线上轨，短期或有回调压力。"
+        elif latest["close"] <= latest["BOLL_L"]:
+            return "股价触及布林线下轨，可能存在反弹机会。"
+        else:
+            return "股价运行在布林带中轨附近，走势中性。"
+
+    elif indicator == "KDJ":
+        if latest["J"] > 80:
+            return "KDJ J值 > 80，超买风险增加。"
+        elif latest["J"] < 20:
+            return "KDJ J值 < 20，超卖区间，存在反弹可能。"
+        else:
+            return "KDJ 位于中性区域，市场走势温和。"
+
+    return "暂无点评。"
 
 # ========== AI 概率预测 ==========
 def deepseek_probability_predict(tech_summary: str, fund_flow: list, news_list: list, api_key: str):
@@ -147,7 +183,6 @@ def deepseek_probability_predict(tech_summary: str, fund_flow: list, news_list: 
 【消息面】  
 {news_text}
 """
-
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": "deepseek-chat",
@@ -159,7 +194,13 @@ def deepseek_probability_predict(tech_summary: str, fund_flow: list, news_list: 
     try:
         resp = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=60)
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        data = resp.json()
+        if "choices" in data and data["choices"]:
+            if "message" in data["choices"][0]:
+                return data["choices"][0]["message"]["content"]
+            elif "delta" in data["choices"][0]:
+                return data["choices"][0]["delta"].get("content", "解析失败")
+        return "DeepSeek 返回数据异常"
     except Exception as e:
         return f"DeepSeek 概率预测出错: {e}"
 
@@ -202,20 +243,7 @@ if st.button("分析"):
         with st.spinner("DeepSeek AI 概率预测中..."):
             ai_text = deepseek_probability_predict(summary, fund_flow, news_list, DEEPSEEK_API_KEY)
             st.subheader("📊 AI 趋势概率预测")
-            st.write(ai_text)
+            st.markdown(ai_text.replace("\n", "  \n"))
     else:
         st.subheader("🤖 本地技术面点评")
-        if indicator == "MACD":
-            if latest["MACD"] > latest["MACDs"]:
-                st.write("MACD 金叉，短期有反弹可能。")
-            elif latest["MACD"] < latest["MACDs"]:
-                st.write("MACD 死叉，短期下行动能较大。")
-            else:
-                st.write("MACD 持平，市场观望情绪浓。")
-        elif indicator == "RSI":
-            if latest["RSI"] < 30:
-                st.write("RSI < 30，超卖区域，可能反弹。")
-            elif latest["RSI"] > 70:
-                st.write("RSI > 70，超买风险，可能回调。")
-            else:
-                st.write("RSI 中性，市场震荡。")
+        st.write(local_comment(indicator, latest))
