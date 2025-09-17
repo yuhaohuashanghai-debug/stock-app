@@ -84,7 +84,6 @@ def fetch_stock_concepts(code: str):
     try:
         all_concepts = ak.stock_board_concept_name_ths()
 
-        # 兼容不同字段
         if "名称" in all_concepts.columns:
             concept_col = "名称"
         elif "板块名称" in all_concepts.columns:
@@ -110,27 +109,23 @@ def fetch_stock_concepts(code: str):
     except Exception as e:
         return [f"获取板块失败: {e}"]
 
-
 @st.cache_data(ttl=300)
 def fetch_concept_fund_flow():
     try:
         df = ak.stock_board_concept_fund_flow_ths()
 
-        # 兼容板块字段
         if "板块名称" not in df.columns:
             if "name" in df.columns:
                 df.rename(columns={"name": "板块名称"}, inplace=True)
             else:
                 df.rename(columns={df.columns[0]: "板块名称"}, inplace=True)
 
-        # 兼容资金流字段
         if "主力净流入" not in df.columns:
             for col in df.columns:
                 if "净流入" in col or "inflow" in col.lower():
                     df.rename(columns={col: "主力净流入"}, inplace=True)
                     break
 
-        # 兼容涨跌幅字段
         if "涨跌幅" not in df.columns:
             for col in df.columns:
                 if "涨跌" in col or "percent" in col.lower():
@@ -298,10 +293,9 @@ if analyze_btn:
                 else:
                     st.write("RSI 中性，市场震荡。")
 
-       with tab5:
+    with tab5:
         st.subheader("📊 板块概念联动分析")
 
-        # ===== 调试：打印接口原始返回 =====
         try:
             all_concepts = ak.stock_board_concept_name_ths()
             st.write("🔍 概念板块接口返回字段:", all_concepts.columns.tolist())
@@ -316,7 +310,6 @@ if analyze_btn:
         except Exception as e:
             st.write("获取资金流失败:", str(e))
 
-        # ===== 下面再执行你的逻辑 =====
         concepts = fetch_stock_concepts(code)
         if concepts:
             st.write("所属概念板块:", "、".join(concepts))
