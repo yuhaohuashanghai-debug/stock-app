@@ -299,42 +299,56 @@ if analyze_btn:
                     st.write("RSI 中性，市场震荡。")
 
     with tab5:
-        st.subheader("📊 板块概念联动分析")
-        concepts = fetch_stock_concepts(code)
-        if concepts:
-            st.write("所属概念板块:", "、".join(concepts))
-            flow_df = fetch_concept_fund_flow()
-            if not flow_df.empty and "error" not in flow_df.columns:
-                flow_df = flow_df[flow_df["板块名称"].isin(concepts)]
-                if not flow_df.empty:
-                    # 数值化并排序
-                    flow_df["主力净流入数值"] = pd.to_numeric(flow_df["主力净流入"], errors="coerce")
-                    flow_df["涨跌幅数值"] = pd.to_numeric(flow_df["涨跌幅"], errors="coerce")
-                    flow_df = flow_df.sort_values("主力净流入数值", ascending=False)
+    st.subheader("📊 板块概念联动分析")
 
-                    # 表格
-                    st.dataframe(flow_df[["板块名称","涨跌幅","主力净流入"]])
+    # ===== 调试：打印接口原始返回 =====
+    try:
+        all_concepts = ak.stock_board_concept_name_ths()
+        st.write("🔍 概念板块接口返回字段:", all_concepts.columns.tolist())
+        st.dataframe(all_concepts.head())
+    except Exception as e:
+        st.write("获取概念板块失败:", str(e))
 
-                    # 热力图（双维度）
-                    heatmap_df = pd.melt(
-                        flow_df,
-                        id_vars=["板块名称"],
-                        value_vars=["主力净流入数值", "涨跌幅数值"],
-                        var_name="指标",
-                        value_name="数值"
-                    )
-                    fig = px.imshow(
-                        heatmap_df.pivot(index="指标", columns="板块名称", values="数值").values,
-                        labels=dict(x="板块名称", y="指标", color="数值"),
-                        x=flow_df["板块名称"].tolist(),
-                        y=["主力净流入", "涨跌幅"],
-                        color_continuous_scale="RdYlGn"
-                    )
-                    fig.update_layout(height=500, margin=dict(l=40, r=40, t=40, b=40))
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.write("暂无板块资金流数据")
+    try:
+        flow_df_raw = ak.stock_board_concept_fund_flow_ths()
+        st.write("🔍 板块资金流接口返回字段:", flow_df_raw.columns.tolist())
+        st.dataframe(flow_df_raw.head())
+    except Exception as e:
+        st.write("获取资金流失败:", str(e))
+
+    # ===== 下面再执行你的逻辑 =====
+    concepts = fetch_stock_concepts(code)
+    if concepts:
+        st.write("所属概念板块:", "、".join(concepts))
+        flow_df = fetch_concept_fund_flow()
+        if not flow_df.empty and "error" not in flow_df.columns:
+            flow_df = flow_df[flow_df["板块名称"].isin(concepts)]
+            if not flow_df.empty:
+                flow_df["主力净流入数值"] = pd.to_numeric(flow_df["主力净流入"], errors="coerce")
+                flow_df["涨跌幅数值"] = pd.to_numeric(flow_df["涨跌幅"], errors="coerce")
+                flow_df = flow_df.sort_values("主力净流入数值", ascending=False)
+
+                st.dataframe(flow_df[["板块名称", "涨跌幅", "主力净流入"]])
+
+                heatmap_df = pd.melt(
+                    flow_df,
+                    id_vars=["板块名称"],
+                    value_vars=["主力净流入数值", "涨跌幅数值"],
+                    var_name="指标",
+                    value_name="数值"
+                )
+                fig = px.imshow(
+                    heatmap_df.pivot(index="指标", columns="板块名称", values="数值").values,
+                    labels=dict(x="板块名称", y="指标", color="数值"),
+                    x=flow_df["板块名称"].tolist(),
+                    y=["主力净流入", "涨跌幅"],
+                    color_continuous_scale="RdYlGn"
+                )
+                fig.update_layout(height=500, margin=dict(l=40, r=40, t=40, b=40))
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                st.write("板块资金流获取失败")
+                st.write("暂无板块资金流数据")
         else:
-            st.write("未找到相关概念板块")
+            st.write("板块资金流获取失败")
+    else:
+        st.write("未找到相关概念板块")
