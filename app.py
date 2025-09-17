@@ -69,10 +69,14 @@ def fetch_stock_news(code: str):
 def fetch_fund_flow(code: str):
     try:
         df = ak.stock_individual_fund_flow(stock=code)
-        if "主力净流入" in df.columns:
-            return df.tail(5)[["日期", "主力净流入"]].to_dict("records")
-        else:
-            return []
+        df = df.tail(5).reset_index(drop=True)
+
+        # 兼容不同字段名
+        for col in ["主力净流入", "主力净流入净额", "主力资金流入"]:
+            if col in df.columns:
+                return df[["日期", col]].rename(columns={col: "主力净流入"}).to_dict("records")
+
+        return [{"error": "未找到主力净流入相关字段"}]
     except Exception as e:
         return [{"error": str(e)}]
 
