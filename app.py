@@ -7,29 +7,38 @@ from plotly.subplots import make_subplots
 import requests
 
 # ========== 页面配置 ==========
-st.set_page_config(page_title="📈 股票AI分析平台", layout="wide")
-st.title("📊 实时股票分析 + DeepSeek AI 趋势预测")
+st.set_page_config(page_title="📈 实时股票分析平台", layout="wide")
+st.title("📊 实时股票技术分析 + 消息面 + DeepSeek AI 趋势预测")
 
 # ========== DeepSeek API ==========
-DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
+# 允许 secrets.toml 或网页输入
+DEEPSEEK_API_KEY = st.secrets.get("DEEPSEEK_API_KEY", None)
+if not DEEPSEEK_API_KEY:
+    DEEPSEEK_API_KEY = st.text_input("请输入 DeepSeek API Key", type="password")
+
 DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 
-def deepseek_commentary(tech_summary: str):
-    """调用 DeepSeek 生成分析点评和趋势预测"""
-    prompt = f"""
-以下是某只股票的实时技术指标，请结合 MACD、均线、成交量，先点评行情，
-再预测短期趋势（上涨/震荡/下跌），理由要清晰：
+def deepseek_commentary(tech_summary: str, news_list: list, api_key: str):
+    """调用 DeepSeek，结合技术面 + 消息面分析"""
+    news_text = "\n".join([f"- {n}" for n in news_list]) if news_list else "无相关新闻"
 
+    prompt = f"""
+以下是某只股票的最新情况，请结合技术指标与消息面综合点评，并预测短期趋势（上涨/震荡/下跌）：
+
+【技术面】
 {tech_summary}
+
+【消息面】
+{news_text}
 """
     headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     payload = {
         "model": "deepseek-chat",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 500,
+        "max_tokens": 600,
         "temperature": 0.7
     }
     try:
@@ -39,14 +48,13 @@ def deepseek_commentary(tech_summary: str):
     except Exception as e:
         return f"DeepSeek 分析出错: {e}"
 
-# ========== 调取实时数据 ==========
+# ========== 调取行情数据 ==========
 @st.cache_data(ttl=300)
 def fetch_realtime_kline(code: str):
     """
-    使用新浪财经接口获取日K数据
+    使用新浪财经接口获取日K数据（海外环境更稳定）
     code: 股票代码，例如 "600519" 或 "000001"
     """
-    # 补充交易所前缀
     if code.startswith("6"):
         symbol = f"sh{code}"
     else:
@@ -63,6 +71,15 @@ def fetch_realtime_kline(code: str):
         "volume": "volume"
     }, inplace=True)
     return df
+
+# ========== 获取新闻 ==========
+@st.cache_data(ttl=300)
+def fetch_stock_news(code: str):
+    try:
+        df = ak.stock_news_em(symbol=code)  # 东方财富个股新闻
+        return df["title"].head(5).tolist()
+    except Exception as e:
+        return [f"新闻获取失败: {e}"]
 
 # ========== 技术指标 ==========
 def add_indicators(df: pd.DataFrame):
@@ -102,26 +119,28 @@ def plot_chart(df: pd.DataFrame, code: str):
 code = st.text_input("请输入股票代码（如 600519）", "600519")
 
 if st.button("分析"):
-    df = fetch_realtime_kline(code)
-    df = add_indicators(df)
+    if not DEEPSEEK_API_KEY:
+        st.error("请先输入 DeepSeek API Key")
+    else:
+        df = fetch_realtime_kline(code)
+        df = add_indicators(df)
 
-    st.plotly_chart(plot_chart(df, code), use_container_width=True)
+        st.plotly_chart(plot_chart(df, code), use_container_width=True)
 
-    # 最新指标
-    latest = df.iloc[-1]
-    summary = f"""
-收盘价: {latest['close']:.2f}, 
-MA5: {latest['MA5']:.2f}, 
-MA20: {latest['MA20']:.2f}, 
-MACD: {latest['MACD']:.3f}, 
-信号线: {latest['MACDs']:.3f}, 
-成交量: {latest['volume']}
-"""
-    st.subheader("📌 实时技术指标总结")
-    st.write(summary)
+        # 技术指标总结
+        latest = df.iloc[-1]
+        summary = f"收盘价:{latest['close']:.2f}, MA5:{latest['MA5']:.2f}, MA20:{latest['MA20']:.2f}, MACD:{latest['MACD']:.3f}, 信号线:{latest['MACDs']:.3f}, 成交量:{latest['volume']}"
+        st.subheader("📌 技术指标总结")
+        st.write(summary)
 
-    # AI 分析 + 趋势预测
-    with st.spinner("DeepSeek AI 正在分析..."):
-        ai_text = deepseek_commentary(summary)
-        st.subheader("🤖 AI 分析与趋势预测")
-        st.write(ai_text)
+        # 新闻
+        news_list = fetch_stock_news(code)
+        st.subheader("📰 实时消息面")
+        for n in news_list:
+            st.write("- " + n)
+
+        # AI 综合分析
+        with st.spinner("DeepSeek AI 综合分析中..."):
+            ai_text = deepseek_commentary(summary, news_list, DEEPSEEK_API_KEY)
+            st.subheader("🤖 AI 综合分析与趋势预测")
+            st.write(ai_text)
