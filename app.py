@@ -11,8 +11,14 @@ st.set_page_config(page_title="📈 实时股票AI分析平台", layout="wide")
 st.title("📊 实时股票技术分析 + 资金流向 + 消息面 + AI 趋势概率预测")
 
 # ========== API Key 输入 ==========
-DEEPSEEK_API_KEY = st.text_input("请输入 DeepSeek API Key（留空则只做本地技术点评）", type="password")
-DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
+# ========== API Key 输入 ==========  
+with st.sidebar:  
+    st.header("🔑 配置")  
+    with st.expander("API Key 设置", expanded=False):  
+        DEEPSEEK_API_KEY = st.text_input(  
+            "请输入 DeepSeek API Key（留空则只做本地技术点评）",  
+            type="password"  
+        )  
 
 # ========== 数据获取函数 ==========
 @st.cache_data(ttl=300)
