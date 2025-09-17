@@ -164,11 +164,16 @@ def deepseek_probability_predict(tech_summary: str, fund_flow: list, news_list: 
         return f"DeepSeek 概率预测出错: {e}"
 
 # ========== 主程序 ==========
-if run_analysis:
+code = st.text_input("请输入股票代码（如 600519）", "600519")
+
+show_ma = st.multiselect("显示均线", ["MA5", "MA20"], default=["MA5", "MA20"])
+show_volume = st.checkbox("显示成交量", value=True)
+indicator = st.selectbox("选择额外指标", ["MACD", "RSI", "BOLL", "KDJ"])
+
+if st.button("分析"):
     df = fetch_realtime_kline(code)
     df = add_indicators(df, indicator)
 
-    # 图表展示
     st.plotly_chart(plot_chart(df, code, indicator, show_ma, show_volume), use_container_width=True)
 
     # 技术指标总结
@@ -188,14 +193,16 @@ if run_analysis:
     # 资金流向
     fund_flow = fetch_fund_flow(code)
     st.subheader("💰 资金流向（近5日）")
-    st.table(pd.DataFrame(fund_flow))
+    for f in fund_flow:
+        if "主力净流入" in f:
+            st.write(f"{f['日期']} 主力净流入: {f['主力净流入']}")
 
     # AI 分析 or 本地点评
     if DEEPSEEK_API_KEY:
         with st.spinner("DeepSeek AI 概率预测中..."):
             ai_text = deepseek_probability_predict(summary, fund_flow, news_list, DEEPSEEK_API_KEY)
             st.subheader("📊 AI 趋势概率预测")
-            st.markdown(ai_text)
+            st.write(ai_text)
     else:
         st.subheader("🤖 本地技术面点评")
         if indicator == "MACD":
