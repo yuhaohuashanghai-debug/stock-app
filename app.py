@@ -7,8 +7,8 @@ from plotly.subplots import make_subplots
 import plotly.express as px
 import requests
 
-st.set_page_config(page_title="📈 实时股票&ETF AI分析平台", layout="wide")
-st.title("📊 实时股票/ETF 技术分析 + 资金流向 + 消息面 + AI 趋势概率预测")
+st.set_page_config(page_title="📈 股票&ETF AI分析平台", layout="wide")
+st.title("📊 实时股票/ETF 技术分析 + 资金流向 + AI趋势/止盈止损建议")
 
 # ========== 控制面板 ==========
 with st.sidebar:
@@ -16,33 +16,28 @@ with st.sidebar:
     with st.expander("📌 基础设置", expanded=True):
         code_type = st.radio("类型", ["A股", "ETF"], horizontal=True)
         code = st.text_input("股票/ETF代码（如 600519 或 510300）", "600519")
+        hold_amount = st.number_input("持有股数", min_value=0, step=100, value=0)
+        hold_cost = st.number_input("持仓成本价", min_value=0.0, step=0.01, value=0.0, format="%.2f")
+        stop_profit = st.number_input("止盈线（%）", value=10.0, help="如达到该盈利率建议止盈")
+        stop_loss = st.number_input("止损线（%）", value=-7.0, help="如达到该亏损率建议止损")
         show_volume = st.checkbox("显示成交量", value=True)
     with st.expander("📊 指标设置", expanded=True):
         show_ma = st.multiselect("显示均线", ["MA5", "MA20"], default=["MA5", "MA20"])
         indicator = st.selectbox("选择额外指标", ["MACD", "RSI", "BOLL", "KDJ"])
     with st.expander("🤖 AI 设置", expanded=False):
         DEEPSEEK_API_KEY = st.text_input(
-            "请输入 DeepSeek API Key（留空则只做本地技术点评）",
-            type="password"
+            "请输入 DeepSeek API Key（留空仅本地建议）", type="password"
         )
     analyze_btn = st.button("🚀 开始分析")
 
-# ========== 核心：数据获取通用接口 ==========
+# ========== 数据接口 ==========
 @st.cache_data(ttl=300)
 def fetch_realtime_kline(code: str, code_type: str):
-    import akshare as ak
-    import pandas as pd
-
     try:
         if code_type == "A股":
             symbol = f"sh{code}" if code.startswith("6") else f"sz{code}"
-            try:
-                df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
-            except Exception as e:
-                st.error(f"A股接口报错：{e}")
-                return pd.DataFrame()
+            df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
         else:
-            # ETF多接口自动兜底
             df = pd.DataFrame()
             for etf_func in [
                 lambda c: ak.fund_etf_hist_sina(symbol=c),
@@ -58,9 +53,8 @@ def fetch_realtime_kline(code: str, code_type: str):
                     continue
         df = df.reset_index(drop=True)
         if df is None or df.empty:
-            st.error(f"代码 {code} 无可用行情数据（所有接口返回空）！请换ETF或股票代码再试。")
+            st.error(f"代码 {code} 无可用行情数据！")
             st.stop()
-        # 字段自动映射
         name_map = {
             "date": "date", "日期": "date", "交易日期": "date",
             "open": "open", "开盘": "open",
@@ -73,7 +67,7 @@ def fetch_realtime_kline(code: str, code_type: str):
         need_cols = ["date", "open", "close", "high", "low", "volume"]
         miss = [x for x in need_cols if x not in df.columns]
         if miss:
-            st.error(f"数据缺失关键字段: {miss}，实际字段: {df.columns.tolist()}")
+            st.error(f"数据缺失: {miss}，实际字段: {df.columns.tolist()}")
             st.write(df.head())
             st.stop()
         df["date"] = pd.to_datetime(df["date"])
@@ -86,7 +80,7 @@ def fetch_realtime_kline(code: str, code_type: str):
 def fetch_stock_news(code: str, code_type: str):
     try:
         if code_type == "ETF":
-            return ["ETF暂无个股新闻，建议关注指数、主题或市场消息"]
+            return ["ETF暂无个股新闻"]
         df = ak.stock_news_em(symbol=code)
         for col in ["title", "新闻标题", "标题"]:
             if col in df.columns:
@@ -106,7 +100,6 @@ def fetch_fund_flow(code: str, code_type: str):
                     return df[["日期", col]].rename(columns={col: "主力净流入"}).to_dict("records")
             return [{"error": f"未找到主力净流入字段，现有字段: {df.columns.tolist()}"}]
         else:
-            # ETF：用成交额/成交量（资金流近似），ak.fund_etf_hist_em最稳
             df = ak.fund_etf_hist_em(symbol=code)
             df = df.tail(5)
             if "日期" in df.columns and "成交额" in df.columns and "成交量" in df.columns:
@@ -115,61 +108,6 @@ def fetch_fund_flow(code: str, code_type: str):
                 return [{"error": f"ETF接口无成交额/量字段，返回: {df.columns.tolist()}"}]
     except Exception as e:
         return [{"error": str(e)}]
-
-@st.cache_data(ttl=300)
-def fetch_stock_concepts(code: str, code_type: str):
-    try:
-        if code_type == "ETF":
-            return ["ETF指数/主题型", "具体主题可参考ETF名称"]
-        all_concepts = ak.stock_board_concept_name_ths()
-        concept_col = None
-        for col in ["名称", "板块名称", "name"]:
-            if col in all_concepts.columns:
-                concept_col = col
-                break
-        if not concept_col:
-            return [f"未找到板块字段，现有字段: {all_concepts.columns.tolist()}"]
-        result = []
-        for name in all_concepts[concept_col]:
-            try:
-                cons = ak.stock_board_concept_cons_ths(symbol=name)
-                for code_col in ["代码", "code"]:
-                    if code_col in cons.columns and code in cons[code_col].astype(str).tolist():
-                        result.append(name)
-            except:
-                continue
-        return result if result else ["未找到所属概念板块"]
-    except Exception as e:
-        return [f"获取板块失败: {e}"]
-
-@st.cache_data(ttl=300)
-def fetch_concept_fund_flow(concept_name=None):
-    import akshare as ak
-    import pandas as pd
-    try:
-        # 新接口：用hist接口，取最近5日，含主力资金流/涨跌幅
-        if concept_name is None:
-            # 可选：返回所有板块最新行情/或遍历所有主流板块
-            concept_list = ak.stock_board_concept_name_ths()
-            flows = []
-            for name in concept_list['name'].head(20):  # 只查前20个热门，避免API频繁
-                try:
-                    df = ak.stock_board_concept_hist_ths(symbol=name, start_date="20230901", end_date=pd.Timestamp.today().strftime('%Y%m%d'))
-                    if not df.empty:
-                        last = df.iloc[-1]
-                        flows.append({
-                            "板块名称": name,
-                            "涨跌幅": last.get("涨跌幅", None),
-                            "主力净流入": last.get("主力资金净流入", None)
-                        })
-                except:
-                    continue
-            return pd.DataFrame(flows)
-        else:
-            df = ak.stock_board_concept_hist_ths(symbol=concept_name, start_date="20230901", end_date=pd.Timestamp.today().strftime('%Y%m%d'))
-            return df.tail(5)
-    except Exception as e:
-        return pd.DataFrame({"error": [str(e)]})
 
 def format_money(x):
     try:
@@ -237,20 +175,43 @@ def plot_chart(df: pd.DataFrame, code: str, indicator: str, show_ma: list, show_
     fig.update_layout(height=900, xaxis_rangeslider_visible=False, showlegend=True)
     return fig
 
-# ========== AI 概率预测 ==========
+# ========== AI 止盈止损分析 ==========
 DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
-def deepseek_probability_predict(tech_summary: str, fund_flow: list, news_list: list, api_key: str):
+def deepseek_probability_predict(tech_summary, fund_flow, news_list, api_key,
+                                 hold_amount, hold_cost, latest_close, stop_profit, stop_loss):
     news_text = "\n".join([f"- {n}" for n in news_list]) if news_list else "无相关新闻"
     flow_text = "\n".join([
-        f"{d['日期']} 主力净流入: {format_money(d.get('主力净流入', d.get('ETF份额','无')))}"
+        f"{d.get('日期', '')} 主力净流入: {format_money(d.get('主力净流入', d.get('ETF份额','无')))}"
         for d in fund_flow if "主力净流入" in d or "ETF份额" in d
     ])
+    try:
+        cost = float(hold_cost)
+        amt = float(hold_amount)
+        close = float(latest_close)
+        profit = (close - cost) * amt if amt > 0 and cost > 0 else 0
+        profit_rate = (close - cost) / cost * 100 if amt > 0 and cost > 0 else 0
+        pos_desc = f"当前持有：{amt:.0f} 股，成本价：{cost:.2f}，现价：{close:.2f}，浮动盈亏：{profit:.2f} 元，盈亏率：{profit_rate:.2f}%"
+        stop_line_desc = f"预设止盈线：{stop_profit:.2f}%，止损线：{stop_loss:.2f}%。"
+        risk_flag = ""
+        if profit_rate >= stop_profit:
+            risk_flag = "【警告：已达到止盈线！建议考虑止盈卖出。】"
+        elif profit_rate <= stop_loss:
+            risk_flag = "【警告：已触及止损线！建议考虑止损离场。】"
+    except:
+        pos_desc = "当前未持有或成本/数量填写异常"
+        stop_line_desc = ""
+        risk_flag = ""
+
     prompt = f"""
-以下是某只股票/ETF的多维度数据，请结合日线趋势、资金流向、技术指标和新闻，给出未来3日内的趋势概率预测：
-- 上涨概率（%）
-- 震荡概率（%）
-- 下跌概率（%）
-并简要说明原因。
+以下是某只股票/ETF的全维度数据，请结合“技术面、资金流向、消息面、持仓盈亏、止盈止损线”进行AI分析。
+分析内容：
+1. 给出未来3日的上涨概率（%）、震荡概率（%）、下跌概率（%）；
+2. 明确【买入/加仓/减仓/止盈/止损/观望】等操作建议，并详细说明原因（结合当前持仓盈亏及设定的止盈/止损线，务必优先保障风控！）。
+
+【持仓信息】  
+{pos_desc}
+{stop_line_desc}
+{risk_flag}
 
 【技术面】  
 {tech_summary}
@@ -278,8 +239,8 @@ if analyze_btn:
             st.stop()
         df = add_indicators(df, indicator)
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["📈 图表", "📰 新闻", "💰 资金流", "🤖 AI/本地分析", "📊 板块概念联动"]
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📈 图表", "📰 新闻", "💰 资金流", "🤖 AI/本地分析"]
     )
 
     with tab1:
@@ -305,7 +266,7 @@ if analyze_btn:
                 else:
                     st.write(f)
         else:
-            st.subheader("💰 ETF成交额/成交量（近5日，仅供资金流参考）")
+            st.subheader("💰 ETF成交额/成交量（近5日）")
             for f in fund_flow:
                 if "成交额" in f and "成交量" in f:
                     st.write(f"{f['日期']} 成交额: {format_money(f['成交额'])}，成交量: {format_money(f['成交量'])}")
@@ -321,13 +282,28 @@ if analyze_btn:
             summary += f", MACD:{latest['MACD']:.3f}, 信号线:{latest['MACDs']:.3f}"
         st.subheader("📌 技术指标总结")
         st.write(summary)
+        # 本地浮盈/止盈止损提示
+        if hold_amount > 0 and hold_cost > 0:
+            pnl = (latest['close'] - hold_cost) * hold_amount
+            pnl_rate = (latest['close'] - hold_cost) / hold_cost * 100
+            st.write(f"当前持有：{hold_amount} 股，成本价：{hold_cost:.2f}，浮盈：{pnl:.2f} 元，盈亏率：{pnl_rate:.2f}%")
+            if pnl_rate >= stop_profit:
+                st.success("【止盈提醒】已达到设定止盈线，建议部分或全部止盈！")
+            elif pnl_rate <= stop_loss:
+                st.error("【止损提醒】已触及止损线，建议尽快止损离场！")
+            else:
+                st.info("当前未触及止盈/止损线，建议结合AI趋势、技术面再决定。")
+        # AI分析
         if DEEPSEEK_API_KEY:
             with st.spinner("DeepSeek AI 概率预测中..."):
-                ai_text = deepseek_probability_predict(summary, fund_flow, news_list, DEEPSEEK_API_KEY)
-                st.subheader("📊 AI 趋势概率预测")
+                ai_text = deepseek_probability_predict(
+                    summary, fund_flow, news_list, DEEPSEEK_API_KEY,
+                    hold_amount, hold_cost, latest['close'], stop_profit, stop_loss
+                )
+                st.subheader("📊 AI 趋势概率+操作建议")
                 st.write(ai_text)
         else:
-            st.subheader("🤖 本地技术面点评")
+            st.subheader("🤖 本地技术面/持仓建议")
             if indicator == "MACD":
                 if latest["MACD"] > latest["MACDs"]:
                     st.write("MACD 金叉，短期有反弹可能。")
@@ -342,72 +318,3 @@ if analyze_btn:
                     st.write("RSI > 70，超买风险，可能回调。")
                 else:
                     st.write("RSI 中性，市场震荡。")
-
-    with tab5:
-        st.subheader("📊 板块概念联动分析")
-        # --- A股才有板块资金流 ---
-        if code_type == "A股":
-            # 显示当前所有概念板块（调试用，可隐藏）
-            try:
-                all_concepts = ak.stock_board_concept_name_ths()
-                st.write("🔍 概念板块接口返回字段:", list(all_concepts.columns))
-                st.dataframe(all_concepts.head())
-            except Exception as e:
-                st.error(f"获取概念板块失败: {e}")
-
-            # 板块资金流
-            try:
-                flow_df_raw = ak.stock_board_concept_fund_flow_ths()
-                st.write("🔍 板块资金流接口返回字段:", list(flow_df_raw.columns))
-                st.dataframe(flow_df_raw.head())
-            except Exception as e:
-                st.error(f"获取资金流失败: {e}")
-
-            # 归属板块
-            concepts = fetch_stock_concepts(code, code_type)
-            if concepts:
-                st.write("所属概念板块:", "、".join(concepts))
-                flow_df = fetch_concept_fund_flow()
-                # 容错：防止空或缺字段
-                if not flow_df.empty and "error" not in flow_df.columns:
-                    if set(["板块名称", "主力净流入", "涨跌幅"]).issubset(flow_df.columns):
-                        # 仅筛选当前相关板块
-                        flow_df = flow_df[flow_df["板块名称"].isin(concepts)]
-                        if not flow_df.empty:
-                            flow_df["主力净流入数值"] = pd.to_numeric(flow_df["主力净流入"], errors="coerce")
-                            flow_df["涨跌幅数值"] = pd.to_numeric(flow_df["涨跌幅"], errors="coerce")
-                            flow_df = flow_df.sort_values("主力净流入数值", ascending=False)
-                            st.dataframe(flow_df[["板块名称", "涨跌幅", "主力净流入"]])
-                            # 热力图
-                            try:
-                                heatmap_df = pd.melt(
-                                    flow_df,
-                                    id_vars=["板块名称"],
-                                    value_vars=["主力净流入数值", "涨跌幅数值"],
-                                    var_name="指标",
-                                    value_name="数值"
-                                )
-                                fig = px.imshow(
-                                    heatmap_df.pivot(index="指标", columns="板块名称", values="数值").values,
-                                    labels=dict(x="板块名称", y="指标", color="数值"),
-                                    x=flow_df["板块名称"].tolist(),
-                                    y=["主力净流入", "涨跌幅"],
-                                    color_continuous_scale="RdYlGn"
-                                )
-                                fig.update_layout(height=500, margin=dict(l=40, r=40, t=40, b=40))
-                                st.plotly_chart(fig, use_container_width=True)
-                            except Exception as e:
-                                st.warning(f"热力图生成失败：{e}")
-                        else:
-                            st.info("暂无相关板块资金流数据")
-                    else:
-                        st.warning(f"板块资金流数据缺字段: {flow_df.columns.tolist()}")
-                else:
-                    st.warning("板块资金流获取失败")
-            else:
-                st.info("未找到所属概念板块")
-        else:
-            # ETF直接展示主题类型
-            st.write("ETF主题/指数板块：", fetch_stock_concepts(code, code_type))
-            st.info("ETF多为主题指数，无A股概念板块资金流联动。")
-
