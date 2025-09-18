@@ -27,11 +27,11 @@ with st.sidebar:
         )
     analyze_btn = st.button("🚀 开始分析")
 
-# ========== 数据获取 ==========
+# ========== 核心：数据获取通用接口 ==========
 @st.cache_data(ttl=300)
 def fetch_realtime_kline(code: str, code_type: str):
-    import pandas as pd
     import akshare as ak
+    import pandas as pd
 
     try:
         if code_type == "A股":
@@ -42,27 +42,25 @@ def fetch_realtime_kline(code: str, code_type: str):
                 st.error(f"A股接口报错：{e}")
                 return pd.DataFrame()
         else:
-            # 依次尝试多源ETF接口，防止断更
+            # ETF多接口自动兜底
+            df = pd.DataFrame()
             for etf_func in [
                 lambda c: ak.fund_etf_hist_sina(symbol=c),
                 lambda c: ak.fund_etf_hist_em(symbol=c),
                 lambda c: ak.fund_etf_hist_jsl(symbol=c)
             ]:
                 try:
-                    df = etf_func(code)
-                    if df is not None and not df.empty:
+                    tmp = etf_func(code)
+                    if tmp is not None and not tmp.empty:
+                        df = tmp
                         break
                 except Exception:
-                    df = pd.DataFrame()
-            if df is None or df.empty:
-                st.error(f"ETF代码 {code}，所有主流接口均无数据！")
-                return pd.DataFrame()
-
+                    continue
         df = df.reset_index(drop=True)
         if df is None or df.empty:
-            st.error(f"代码 {code} 无可用行情数据（接口返回空）！")
-            return pd.DataFrame()
-        # 字段映射
+            st.error(f"代码 {code} 无可用行情数据（所有接口返回空）！请换ETF或股票代码再试。")
+            st.stop()
+        # 字段自动映射
         name_map = {
             "date": "date", "日期": "date", "交易日期": "date",
             "open": "open", "开盘": "open",
@@ -72,60 +70,54 @@ def fetch_realtime_kline(code: str, code_type: str):
             "volume": "volume", "成交量": "volume", "成交量(手)": "volume", "成交量(股)": "volume"
         }
         df = df.rename(columns={k: v for k, v in name_map.items() if k in df.columns})
-        for col in ["date", "open", "close", "high", "low", "volume"]:
-            if col not in df.columns:
-                st.error(f"缺少必要字段: {col}，实际返回字段: {df.columns.tolist()}")
-                st.write(df.head())
-                return pd.DataFrame()
+        need_cols = ["date", "open", "close", "high", "low", "volume"]
+        miss = [x for x in need_cols if x not in df.columns]
+        if miss:
+            st.error(f"数据缺失关键字段: {miss}，实际字段: {df.columns.tolist()}")
+            st.write(df.head())
+            st.stop()
         df["date"] = pd.to_datetime(df["date"])
         return df
     except Exception as e:
-        st.error(f"行情数据接口异常：{e}")
-        return pd.DataFrame()
+        st.error(f"行情数据接口异常: {e}")
+        st.stop()
 
 @st.cache_data(ttl=300)
 def fetch_stock_news(code: str, code_type: str):
-    if code_type == "ETF":
-        return ["ETF暂无个股新闻，建议关注指数、主题或市场消息"]
     try:
+        if code_type == "ETF":
+            return ["ETF暂无个股新闻，建议关注指数、主题或市场消息"]
         df = ak.stock_news_em(symbol=code)
         for col in ["title", "新闻标题", "标题"]:
             if col in df.columns:
                 return df[col].head(5).tolist()
         return ["未找到新闻标题字段"]
-    except Exception:
-        try:
-            df = ak.stock_hot_rank_latest_em()
-            return df["文章标题"].head(5).tolist()
-        except Exception as e:
-            return [f"新闻获取失败: {e}"]
+    except Exception as e:
+        return [f"新闻获取失败: {e}"]
 
 @st.cache_data(ttl=300)
 def fetch_fund_flow(code: str, code_type: str):
-    if code_type == "A股":
-        try:
+    try:
+        if code_type == "A股":
             df = ak.stock_individual_fund_flow(stock=code)
             df = df.tail(5).reset_index(drop=True)
             for col in ["主力净流入-净额", "主力净流入", "主力净流入净额", "主力资金流入", "主力资金净流入"]:
                 if col in df.columns:
                     return df[["日期", col]].rename(columns={col: "主力净流入"}).to_dict("records")
             return [{"error": f"未找到主力净流入字段，现有字段: {df.columns.tolist()}"}]
-        except Exception as e:
-            return [{"error": str(e)}]
-    else:  # ETF
-        try:
+        else:
+            # ETF：用份额变化
             df = ak.fund_etf_share_daily_em(symbol=code)
             df = df.sort_values("日期").tail(5)
             return df[["日期", "最新份额"]].rename(columns={"最新份额": "ETF份额"}).to_dict("records")
-        except Exception as e:
-            return [{"error": str(e)}]
+    except Exception as e:
+        return [{"error": str(e)}]
 
 @st.cache_data(ttl=300)
 def fetch_stock_concepts(code: str, code_type: str):
-    if code_type == "ETF":
-        # ETF主题直接用ETF名称和基金公司分类
-        return ["ETF指数/主题型", "具体主题可参考ETF名称"]
     try:
+        if code_type == "ETF":
+            return ["ETF指数/主题型", "具体主题可参考ETF名称"]
         all_concepts = ak.stock_board_concept_name_ths()
         concept_col = None
         for col in ["名称", "板块名称", "name"]:
@@ -152,10 +144,10 @@ def fetch_concept_fund_flow():
     try:
         df = ak.stock_board_concept_fund_flow_ths()
         if "板块名称" not in df.columns:
-            if "name" in df.columns:
-                df.rename(columns={"name": "板块名称"}, inplace=True)
-            else:
-                df.rename(columns={df.columns[0]: "板块名称"}, inplace=True)
+            for alt in ["name"]:
+                if alt in df.columns:
+                    df.rename(columns={alt: "板块名称"}, inplace=True)
+                    break
         if "主力净流入" not in df.columns:
             for col in df.columns:
                 if "净流入" in col or "inflow" in col.lower():
@@ -273,6 +265,8 @@ def deepseek_probability_predict(tech_summary: str, fund_flow: list, news_list: 
 if analyze_btn:
     with st.spinner("数据加载中..."):
         df = fetch_realtime_kline(code, code_type)
+        if df is None or df.empty:
+            st.stop()
         df = add_indicators(df, indicator)
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 图表", "📰 新闻", "💰 资金流", "🤖 AI/本地分析", "📊 板块概念联动"])
 
@@ -374,3 +368,4 @@ if analyze_btn:
         else:
             st.write("ETF主题/指数板块：", fetch_stock_concepts(code, code_type))
             st.write("ETF多为主题指数，无A股概念板块资金流联动。")
+
