@@ -280,9 +280,9 @@ if analyze_btn:
         st.subheader("📰 实时消息面")
         for n in news_list:
             st.write("- " + n)
-    with tab3:
-    fund_flow = fetch_fund_flow(code, code_type)
-    if code_type == "A股":
+   with tab3:
+        fund_flow = fetch_fund_flow(code, code_type)
+        if code_type == "A股":
         st.subheader("💰 资金流向（近5日）")
         for f in fund_flow:
             if "主力净流入" in f:
