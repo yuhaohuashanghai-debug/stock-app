@@ -37,15 +37,17 @@ def fetch_realtime_kline(code: str, code_type: str):
     else:  # ETF
         df = ak.fund_etf_hist_sina(symbol=code)
         df = df.reset_index(drop=True)
+    # --------- 判断数据是否为空 ---------
+    if df is None or df.empty:
+        st.error(f"未查询到该代码的数据（如ETF {code} 数据源无数据），请换一个代码试试！")
+        st.stop()
     # --------- 字段自动适配 ----------
-    # 先列出所有时间、开盘、收盘、最高、最低、成交量可能的中文/英文表头
     time_names = ["date", "日期", "交易日期"]
     open_names = ["open", "开盘"]
     close_names = ["close", "收盘"]
     high_names = ["high", "最高"]
     low_names = ["low", "最低"]
     vol_names = ["volume", "成交量", "成交量(手)", "成交量(股)"]
-
     col_map = {}
     for col in df.columns:
         if col in time_names: col_map[col] = "date"
@@ -54,16 +56,13 @@ def fetch_realtime_kline(code: str, code_type: str):
         if col in high_names: col_map[col] = "high"
         if col in low_names: col_map[col] = "low"
         if col in vol_names: col_map[col] = "volume"
-
     df = df.rename(columns=col_map)
-
-    # --------- 自动排查缺失，调试展示 ---------
     needed = ["date", "open", "close", "high", "low", "volume"]
     missing = [n for n in needed if n not in df.columns]
     if missing:
         st.error(f"缺少必要字段: {missing}，当前返回字段: {df.columns.tolist()}")
         st.write(df.head())
-        raise ValueError(f"数据表头不全: {missing}")
+        st.stop()
     df["date"] = pd.to_datetime(df["date"])
     return df
 
