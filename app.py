@@ -106,10 +106,13 @@ def fetch_fund_flow(code: str, code_type: str):
                     return df[["日期", col]].rename(columns={col: "主力净流入"}).to_dict("records")
             return [{"error": f"未找到主力净流入字段，现有字段: {df.columns.tolist()}"}]
         else:
-            # ETF：用份额变化
-            df = ak.fund_etf_share_daily_em(symbol=code)
-            df = df.sort_values("日期").tail(5)
-            return df[["日期", "最新份额"]].rename(columns={"最新份额": "ETF份额"}).to_dict("records")
+            # ETF：用成交额/成交量（资金流近似），ak.fund_etf_hist_em最稳
+            df = ak.fund_etf_hist_em(symbol=code)
+            df = df.tail(5)
+            if "日期" in df.columns and "成交额" in df.columns and "成交量" in df.columns:
+                return df[["日期", "成交额", "成交量"]].to_dict("records")
+            else:
+                return [{"error": f"ETF接口无成交额/量字段，返回: {df.columns.tolist()}"}]
     except Exception as e:
         return [{"error": str(e)}]
 
@@ -278,17 +281,28 @@ if analyze_btn:
         for n in news_list:
             st.write("- " + n)
     with tab3:
-        fund_flow = fetch_fund_flow(code, code_type)
-        st.subheader("💰 资金流向（近5日）" if code_type == "A股" else "💰 ETF份额变化（近5日）")
+    fund_flow = fetch_fund_flow(code, code_type)
+    if code_type == "A股":
+        st.subheader("💰 资金流向（近5日）")
         for f in fund_flow:
-            if code_type == "A股" and "主力净流入" in f:
+            if "主力净流入" in f:
                 val = format_money(f["主力净流入"])
                 prefix = "+" if f["主力净流入"] > 0 else ""
                 st.write(f"{f['日期']} 主力净流入: {prefix}{val}")
-            elif code_type == "ETF" and "ETF份额" in f:
-                st.write(f"{f['日期']} ETF最新份额: {format_money(f['ETF份额'])}")
+            elif "error" in f:
+                st.error(f["error"])
             else:
                 st.write(f)
+    else:
+        st.subheader("💰 ETF成交额/成交量（近5日，仅供资金流参考）")
+        for f in fund_flow:
+            if "成交额" in f and "成交量" in f:
+                st.write(f"{f['日期']} 成交额: {format_money(f['成交额'])}，成交量: {format_money(f['成交量'])}")
+            elif "error" in f:
+                st.error(f["error"])
+            else:
+                st.write(f)
+
     with tab4:
         latest = df.iloc[-1]
         summary = f"收盘价:{latest['close']:.2f}, MA5:{latest['MA5']:.2f}, MA20:{latest['MA20']:.2f}"
