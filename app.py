@@ -4,18 +4,31 @@ import pandas_ta as ta
 import akshare as ak
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import plotly.express as px
 import requests
 
 st.set_page_config(page_title="📈 股票&ETF AI分析平台", layout="wide")
-st.title("📊 单只&批量选股 · 技术分析 · 回测 · AI风控解读")
+st.title("📊 实时股票/ETF 技术分析 + 资金流向 + AI趋势/止盈止损建议")
 
-# ================== 控制面板 ==================
+# ========== 控制面板 ==========
 with st.sidebar:
     st.header("⚙️ 控制面板")
-    mode = st.radio("分析模式", ["单只分析", "批量选股&回测"], horizontal=True)
-    code_type = st.radio("类型", ["A股", "ETF"], horizontal=True)
-    # AI KEY 统一入口
-    DEEPSEEK_API_KEY = st.text_input("DeepSeek API Key（选填，用于AI风控）", type="password")
+    with st.expander("📌 基础设置", expanded=True):
+        code_type = st.radio("类型", ["A股", "ETF"], horizontal=True)
+        code = st.text_input("股票/ETF代码（如 600519 或 510300）", "600519")
+        hold_amount = st.number_input("持有股数", min_value=0, step=100, value=0)
+        hold_cost = st.number_input("持仓成本价", min_value=0.0, step=0.01, value=0.0, format="%.2f")
+        stop_profit = st.number_input("止盈线（%）", value=10.0, help="如达到该盈利率建议止盈")
+        stop_loss = st.number_input("止损线（%）", value=-7.0, help="如达到该亏损率建议止损")
+        show_volume = st.checkbox("显示成交量", value=True)
+    with st.expander("📊 指标设置", expanded=True):
+        show_ma = st.multiselect("显示均线", ["MA5", "MA20"], default=["MA5", "MA20"])
+        indicator = st.selectbox("选择额外指标", ["MACD", "RSI", "BOLL", "KDJ"])
+    with st.expander("🤖 AI 设置", expanded=False):
+        DEEPSEEK_API_KEY = st.text_input(
+            "请输入 DeepSeek API Key（留空仅本地建议）", type="password"
+        )
+    analyze_btn = st.button("🚀 开始分析")
 
 # ========== 数据接口 ==========
 @st.cache_data(ttl=300)
@@ -39,6 +52,9 @@ def fetch_realtime_kline(code: str, code_type: str):
                 except Exception:
                     continue
         df = df.reset_index(drop=True)
+        if df is None or df.empty:
+            st.error(f"代码 {code} 无可用行情数据！")
+            st.stop()
         name_map = {
             "date": "date", "日期": "date", "交易日期": "date",
             "open": "open", "开盘": "open",
@@ -51,13 +67,14 @@ def fetch_realtime_kline(code: str, code_type: str):
         need_cols = ["date", "open", "close", "high", "low", "volume"]
         miss = [x for x in need_cols if x not in df.columns]
         if miss:
-            return None
+            st.error(f"数据缺失: {miss}，实际字段: {df.columns.tolist()}")
+            st.write(df.head())
+            st.stop()
         df["date"] = pd.to_datetime(df["date"])
-        for col in ["open", "close", "high", "low", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        return df.dropna()
-    except Exception:
-        return None
+        return df
+    except Exception as e:
+        st.error(f"行情数据接口异常: {e}")
+        st.stop()
 
 @st.cache_data(ttl=300)
 def fetch_stock_news(code: str, code_type: str):
@@ -158,224 +175,146 @@ def plot_chart(df: pd.DataFrame, code: str, indicator: str, show_ma: list, show_
     fig.update_layout(height=900, xaxis_rangeslider_visible=False, showlegend=True)
     return fig
 
-# ========== 批量选股&回测信号 ==========
-def check_signals(df, strategies):
-    res = []
-    if "MA金叉" in strategies:
-        ma5 = ta.sma(df["close"], length=5)
-        ma20 = ta.sma(df["close"], length=20)
-        if ma5.iloc[-1] > ma20.iloc[-1] and ma5.iloc[-2] <= ma20.iloc[-2]:
-            res.append("MA金叉")
-    if "MACD金叉" in strategies:
-        macd = ta.macd(df["close"])
-        if macd["MACD_12_26_9"].iloc[-1] > macd["MACDs_12_26_9"].iloc[-1] and \
-           macd["MACD_12_26_9"].iloc[-2] <= macd["MACDs_12_26_9"].iloc[-2]:
-            res.append("MACD金叉")
-    if "RSI超卖反弹" in strategies:
-        rsi = ta.rsi(df["close"], length=14)
-        if rsi.iloc[-2] < 30 and rsi.iloc[-1] > 30:
-            res.append("RSI超卖反弹")
-    if "BOLL下轨突破" in strategies:
-        boll = ta.bbands(df["close"], length=20)
-        if df["close"].iloc[-2] < boll["BBL_20_2.0"].iloc[-2] and df["close"].iloc[-1] > boll["BBL_20_2.0"].iloc[-1]:
-            res.append("BOLL下轨突破")
-    if "KDJ金叉" in strategies:
-        kdj = ta.stoch(df["high"], df["low"], df["close"])
-        if kdj["STOCHk_14_3_3"].iloc[-2] < kdj["STOCHd_14_3_3"].iloc[-2] and \
-           kdj["STOCHk_14_3_3"].iloc[-1] > kdj["STOCHd_14_3_3"].iloc[-1]:
-            res.append("KDJ金叉")
-    return res
+# ========== AI 止盈止损分析 ==========
+DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
+def deepseek_probability_predict(tech_summary, fund_flow, news_list, api_key,
+                                 hold_amount, hold_cost, latest_close, stop_profit, stop_loss):
+    news_text = "\n".join([f"- {n}" for n in news_list]) if news_list else "无相关新闻"
+    flow_text = "\n".join([
+        f"{d.get('日期', '')} 主力净流入: {format_money(d.get('主力净流入', d.get('ETF份额','无')))}"
+        for d in fund_flow if "主力净流入" in d or "ETF份额" in d
+    ])
+    try:
+        cost = float(hold_cost)
+        amt = float(hold_amount)
+        close = float(latest_close)
+        profit = (close - cost) * amt if amt > 0 and cost > 0 else 0
+        profit_rate = (close - cost) / cost * 100 if amt > 0 and cost > 0 else 0
+        pos_desc = f"当前持有：{amt:.0f} 股，成本价：{cost:.2f}，现价：{close:.2f}，浮动盈亏：{profit:.2f} 元，盈亏率：{profit_rate:.2f}%"
+        stop_line_desc = f"预设止盈线：{stop_profit:.2f}%，止损线：{stop_loss:.2f}%。"
+        risk_flag = ""
+        if profit_rate >= stop_profit:
+            risk_flag = "【警告：已达到止盈线！建议考虑止盈卖出。】"
+        elif profit_rate <= stop_loss:
+            risk_flag = "【警告：已触及止损线！建议考虑止损离场。】"
+    except:
+        pos_desc = "当前未持有或成本/数量填写异常"
+        stop_line_desc = ""
+        risk_flag = ""
 
-def backtest_signal(df, signal_func, n_forward=5):
-    res = []
-    for i in range(len(df) - n_forward):
-        if signal_func(df.iloc[:i+1]):
-            future_pct = (df["close"].iloc[i+n_forward] - df["close"].iloc[i]) / df["close"].iloc[i] * 100
-            res.append(future_pct)
-    if res:
-        win_rate = sum([1 if x > 0 else 0 for x in res]) / len(res) * 100
-        avg_return = sum(res) / len(res)
-        return {"信号次数": len(res), f"{n_forward}日均涨跌幅": avg_return, "胜率": win_rate}
-    else:
-        return {"信号次数": 0, f"{n_forward}日均涨跌幅": 0, "胜率": 0}
+    prompt = f"""
+以下是某只股票/ETF的全维度数据，请结合“技术面、资金流向、消息面、持仓盈亏、止盈止损线”进行AI分析。
+分析内容：
+1. 给出未来3日的上涨概率（%）、震荡概率（%）、下跌概率（%）；
+2. 明确【买入/加仓/减仓/止盈/止损/观望】等操作建议，并详细说明原因（结合当前持仓盈亏及设定的止盈/止损线，务必优先保障风控！）。
 
-def ai_strategy_commentary(pool_df, backtest_df, strategies, api_key):
-    stocks_txt = "\n".join([f"{row['code']} {row['signals']}" for _, row in pool_df.iterrows()])
-    stats_txt = backtest_df.to_string(index=False)
-    prompt = f"""以下是批量选股与回测统计，请以专业投研视角，输出智能策略点评：
-【信号策略】：{strategies}
-【信号股票池】：\n{stocks_txt}
-【信号回测统计】：\n{stats_txt}
-请用简明语言总结这些策略的近期选股胜率、风控建议、适合的市场环境、以及操作建议。
+【持仓信息】  
+{pos_desc}
+{stop_line_desc}
+{risk_flag}
+
+【技术面】  
+{tech_summary}
+
+【资金流向】  
+{flow_text if flow_text else "暂无资金流数据"}
+
+【消息面】  
+{news_text}
 """
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = {"model": "deepseek-chat","messages": [{"role": "user", "content": prompt}],"max_tokens": 512,"temperature": 0.5}
+    payload = {"model": "deepseek-chat","messages": [{"role": "user", "content": prompt}],"max_tokens": 600,"temperature": 0.5}
     try:
-        resp = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload, timeout=60)
+        resp = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=60)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        return f"AI点评失败：{e}"
+        return f"DeepSeek 概率预测出错: {e}"
 
 # ========== 主程序 ==========
-if mode == "单只分析":
-    with st.expander("📌 单只基础参数", expanded=True):
-        code = st.text_input("股票/ETF代码（如 600519 或 510300）", "600519")
-        hold_amount = st.number_input("持有股数", min_value=0, step=100, value=0)
-        hold_cost = st.number_input("持仓成本价", min_value=0.0, step=0.01, value=0.0, format="%.2f")
-        stop_profit = st.number_input("止盈线（%）", value=10.0, help="如达到该盈利率建议止盈")
-        stop_loss = st.number_input("止损线（%）", value=-7.0, help="如达到该亏损率建议止损")
-        show_volume = st.checkbox("显示成交量", value=True)
-    with st.expander("📊 技术指标设置", expanded=True):
-        show_ma = st.multiselect("显示均线", ["MA5", "MA20"], default=["MA5", "MA20"])
-        indicator = st.selectbox("选择额外指标", ["MACD", "RSI", "BOLL", "KDJ"])
+if analyze_btn:
+    with st.spinner("数据加载中..."):
+        df = fetch_realtime_kline(code, code_type)
+        if df is None or df.empty:
+            st.stop()
+        df = add_indicators(df, indicator)
 
-    analyze_btn = st.button("🚀 单只分析")
-    if analyze_btn:
-        with st.spinner("数据加载中..."):
-            df = fetch_realtime_kline(code, code_type)
-            if df is None or df.empty:
-                st.error("无可用行情数据")
-                st.stop()
-            df = add_indicators(df, indicator)
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📈 图表", "📰 新闻", "💰 资金流", "🤖 AI/本地分析"]
+    )
 
-        tab1, tab2, tab3, tab4 = st.tabs(
-            ["📈 图表", "📰 新闻", "💰 资金流", "🤖 AI/本地分析"]
-        )
+    with tab1:
+        st.plotly_chart(plot_chart(df, code, indicator, show_ma, show_volume), use_container_width=True)
 
-        with tab1:
-            st.plotly_chart(plot_chart(df, code, indicator, show_ma, show_volume), use_container_width=True)
+    with tab2:
+        news_list = fetch_stock_news(code, code_type)
+        st.subheader("📰 实时消息面")
+        for n in news_list:
+            st.write("- " + n)
 
-        with tab2:
-            news_list = fetch_stock_news(code, code_type)
-            st.subheader("📰 实时消息面")
-            for n in news_list:
-                st.write("- " + n)
-
-        with tab3:
-            fund_flow = fetch_fund_flow(code, code_type)
-            if code_type == "A股":
-                st.subheader("💰 资金流向（近5日）")
-                for f in fund_flow:
-                    if "主力净流入" in f:
-                        val = format_money(f["主力净流入"])
-                        prefix = "+" if f["主力净流入"] > 0 else ""
-                        st.write(f"{f['日期']} 主力净流入: {prefix}{val}")
-                    elif "error" in f:
-                        st.error(f["error"])
-                    else:
-                        st.write(f)
-            else:
-                st.subheader("💰 ETF成交额/成交量（近5日）")
-                for f in fund_flow:
-                    if "成交额" in f and "成交量" in f:
-                        st.write(f"{f['日期']} 成交额: {format_money(f['成交额'])}，成交量: {format_money(f['成交量'])}")
-                    elif "error" in f:
-                        st.error(f["error"])
-                    else:
-                        st.write(f)
-
-        with tab4:
-            latest = df.iloc[-1]
-            summary = f"收盘价:{latest['close']:.2f}, MA5:{latest['MA5']:.2f}, MA20:{latest['MA20']:.2f}"
-            if indicator == "MACD":
-                summary += f", MACD:{latest['MACD']:.3f}, 信号线:{latest['MACDs']:.3f}"
-            st.subheader("📌 技术指标总结")
-            st.write(summary)
-            # 本地浮盈/止盈止损提示
-            if hold_amount > 0 and hold_cost > 0:
-                pnl = (latest['close'] - hold_cost) * hold_amount
-                pnl_rate = (latest['close'] - hold_cost) / hold_cost * 100
-                st.write(f"当前持有：{hold_amount} 股，成本价：{hold_cost:.2f}，浮盈：{pnl:.2f} 元，盈亏率：{pnl_rate:.2f}%")
-                if pnl_rate >= stop_profit:
-                    st.success("【止盈提醒】已达到设定止盈线，建议部分或全部止盈！")
-                elif pnl_rate <= stop_loss:
-                    st.error("【止损提醒】已触及止损线，建议尽快止损离场！")
+    with tab3:
+        fund_flow = fetch_fund_flow(code, code_type)
+        if code_type == "A股":
+            st.subheader("💰 资金流向（近5日）")
+            for f in fund_flow:
+                if "主力净流入" in f:
+                    val = format_money(f["主力净流入"])
+                    prefix = "+" if f["主力净流入"] > 0 else ""
+                    st.write(f"{f['日期']} 主力净流入: {prefix}{val}")
+                elif "error" in f:
+                    st.error(f["error"])
                 else:
-                    st.info("当前未触及止盈/止损线，建议结合AI趋势、技术面再决定。")
-            # AI分析
-            if DEEPSEEK_API_KEY:
-                news_list = fetch_stock_news(code, code_type)
-                fund_flow = fetch_fund_flow(code, code_type)
-                with st.spinner("DeepSeek AI 概率预测中..."):
-                    ai_text = ai_strategy_commentary(
-                        pd.DataFrame([{"code": code, "signals": indicator}]),
-                        pd.DataFrame(),
-                        [indicator],
-                        DEEPSEEK_API_KEY
-                    )
-                    st.subheader("📊 AI 趋势概率+操作建议")
-                    st.write(ai_text)
-            else:
-                st.subheader("🤖 本地技术面/持仓建议")
-                if indicator == "MACD":
-                    if latest["MACD"] > latest["MACDs"]:
-                        st.write("MACD 金叉，短期有反弹可能。")
-                    elif latest["MACD"] < latest["MACDs"]:
-                        st.write("MACD 死叉，短期下行动能较大。")
-                    else:
-                        st.write("MACD 持平，市场观望情绪浓。")
-                elif indicator == "RSI":
-                    if latest["RSI"] < 30:
-                        st.write("RSI < 30，超卖区域，可能反弹。")
-                    elif latest["RSI"] > 70:
-                        st.write("RSI > 70，超买风险，可能回调。")
-                    else:
-                        st.write("RSI 中性，市场震荡。")
-
-elif mode == "批量选股&回测":
-    st.header("📋 批量选股&回测")
-    uploaded_file = st.file_uploader("上传股票池Excel（示例见 stocks_example.xlsx）", type=["xlsx"])
-    period = st.selectbox("K线周期", ["日线"], index=0)
-    strategies = st.multiselect("信号策略", 
-        ["MA金叉", "MACD金叉", "RSI超卖反弹", "BOLL下轨突破", "KDJ金叉"], 
-        default=["MACD金叉", "RSI超卖反弹"])
-    backtest_days = st.selectbox("信号回测未来N日", [3, 5, 10], index=1)
-    analyze_btn = st.button("🚀 批量分析", key="batch_analyze")
-    if analyze_btn:
-        if uploaded_file is None:
-            st.warning("请上传Excel股票池文件！")
-            st.stop()
-        stocks_df = pd.read_excel(uploaded_file)
-        if "code" not in stocks_df.columns:
-            st.error("Excel必须包含'code'列（股票/ETF代码）")
-            st.stop()
-        pool_result = []
-        st.info("正在批量信号筛选...")
-        for idx, row in stocks_df.iterrows():
-            code = str(row["code"]).zfill(6)
-            df = fetch_realtime_kline(code, code_type)
-            if df is None or df.empty or len(df) < 40:
-                continue
-            sigs = check_signals(df, strategies)
-            if sigs:
-                pool_result.append({"code": code, "name": row.get("name", ""), "signals": ",".join(sigs)})
-        pool_df = pd.DataFrame(pool_result)
-        st.subheader("📝 筛选结果")
-        if pool_df.empty:
-            st.warning("无股票/ETF符合全部选中策略条件")
+                    st.write(f)
         else:
-            st.dataframe(pool_df)
+            st.subheader("💰 ETF成交额/成交量（近5日）")
+            for f in fund_flow:
+                if "成交额" in f and "成交量" in f:
+                    st.write(f"{f['日期']} 成交额: {format_money(f['成交额'])}，成交量: {format_money(f['成交量'])}")
+                elif "error" in f:
+                    st.error(f["error"])
+                else:
+                    st.write(f)
 
-        st.subheader(f"🔍 回测分析（未来{backtest_days}日表现）")
-        backtest_stats = []
-        for _, row in pool_df.iterrows():
-            code = row["code"]
-            df = fetch_realtime_kline(code, code_type)
-            def sig_func(sub_df):
-                return all([s in check_signals(sub_df, strategies) for s in row["signals"].split(",")])
-            bt = backtest_signal(df, sig_func, n_forward=backtest_days)
-            backtest_stats.append({"code": code, **bt})
-        backtest_df = pd.DataFrame(backtest_stats)
-        st.dataframe(backtest_df)
-
-        st.subheader("🤖 AI智能策略点评")
-        if not pool_df.empty and DEEPSEEK_API_KEY:
-            with st.spinner("AI分析中..."):
-                ai_text = ai_strategy_commentary(pool_df, backtest_df, strategies, DEEPSEEK_API_KEY)
+    with tab4:
+        latest = df.iloc[-1]
+        summary = f"收盘价:{latest['close']:.2f}, MA5:{latest['MA5']:.2f}, MA20:{latest['MA20']:.2f}"
+        if indicator == "MACD":
+            summary += f", MACD:{latest['MACD']:.3f}, 信号线:{latest['MACDs']:.3f}"
+        st.subheader("📌 技术指标总结")
+        st.write(summary)
+        # 本地浮盈/止盈止损提示
+        if hold_amount > 0 and hold_cost > 0:
+            pnl = (latest['close'] - hold_cost) * hold_amount
+            pnl_rate = (latest['close'] - hold_cost) / hold_cost * 100
+            st.write(f"当前持有：{hold_amount} 股，成本价：{hold_cost:.2f}，浮盈：{pnl:.2f} 元，盈亏率：{pnl_rate:.2f}%")
+            if pnl_rate >= stop_profit:
+                st.success("【止盈提醒】已达到设定止盈线，建议部分或全部止盈！")
+            elif pnl_rate <= stop_loss:
+                st.error("【止损提醒】已触及止损线，建议尽快止损离场！")
+            else:
+                st.info("当前未触及止盈/止损线，建议结合AI趋势、技术面再决定。")
+        # AI分析
+        if DEEPSEEK_API_KEY:
+            with st.spinner("DeepSeek AI 概率预测中..."):
+                ai_text = deepseek_probability_predict(
+                    summary, fund_flow, news_list, DEEPSEEK_API_KEY,
+                    hold_amount, hold_cost, latest['close'], stop_profit, stop_loss
+                )
+                st.subheader("📊 AI 趋势概率+操作建议")
                 st.write(ai_text)
         else:
-            st.write("未配置API KEY，仅展示数据。")
-
-        st.download_button("下载筛选结果", pool_df.to_csv(index=False).encode("utf-8-sig"), "signals_select_result.csv")
-        st.download_button("下载回测结果", backtest_df.to_csv(index=False).encode("utf-8-sig"), "signals_backtest_result.csv")
+            st.subheader("🤖 本地技术面/持仓建议")
+            if indicator == "MACD":
+                if latest["MACD"] > latest["MACDs"]:
+                    st.write("MACD 金叉，短期有反弹可能。")
+                elif latest["MACD"] < latest["MACDs"]:
+                    st.write("MACD 死叉，短期下行动能较大。")
+                else:
+                    st.write("MACD 持平，市场观望情绪浓。")
+            elif indicator == "RSI":
+                if latest["RSI"] < 30:
+                    st.write("RSI < 30，超卖区域，可能反弹。")
+                elif latest["RSI"] > 70:
+                    st.write("RSI > 70，超买风险，可能回调。")
+                else:
+                    st.write("RSI 中性，市场震荡。")
