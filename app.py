@@ -30,41 +30,58 @@ with st.sidebar:
 # ========== 数据获取 ==========
 @st.cache_data(ttl=300)
 def fetch_realtime_kline(code: str, code_type: str):
-    if code_type == "A股":
-        symbol = f"sh{code}" if code.startswith("6") else f"sz{code}"
-        df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
+    import pandas as pd
+    import akshare as ak
+
+    try:
+        if code_type == "A股":
+            symbol = f"sh{code}" if code.startswith("6") else f"sz{code}"
+            try:
+                df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
+            except Exception as e:
+                st.error(f"A股接口报错：{e}")
+                return pd.DataFrame()
+        else:
+            # 依次尝试多源ETF接口，防止断更
+            for etf_func in [
+                lambda c: ak.fund_etf_hist_sina(symbol=c),
+                lambda c: ak.fund_etf_hist_em(symbol=c),
+                lambda c: ak.fund_etf_hist_jsl(symbol=c)
+            ]:
+                try:
+                    df = etf_func(code)
+                    if df is not None and not df.empty:
+                        break
+                except Exception:
+                    df = pd.DataFrame()
+            if df is None or df.empty:
+                st.error(f"ETF代码 {code}，所有主流接口均无数据！")
+                return pd.DataFrame()
+
         df = df.reset_index(drop=True)
-    else:  # ETF
-        df = ak.fund_etf_hist_sina(symbol=code)
-        df = df.reset_index(drop=True)
-    # --------- 判断数据是否为空 ---------
-    if df is None or df.empty:
-        st.error(f"未查询到该代码的数据（如ETF {code} 数据源无数据），请换一个代码试试！")
-        st.stop()
-    # --------- 字段自动适配 ----------
-    time_names = ["date", "日期", "交易日期"]
-    open_names = ["open", "开盘"]
-    close_names = ["close", "收盘"]
-    high_names = ["high", "最高"]
-    low_names = ["low", "最低"]
-    vol_names = ["volume", "成交量", "成交量(手)", "成交量(股)"]
-    col_map = {}
-    for col in df.columns:
-        if col in time_names: col_map[col] = "date"
-        if col in open_names: col_map[col] = "open"
-        if col in close_names: col_map[col] = "close"
-        if col in high_names: col_map[col] = "high"
-        if col in low_names: col_map[col] = "low"
-        if col in vol_names: col_map[col] = "volume"
-    df = df.rename(columns=col_map)
-    needed = ["date", "open", "close", "high", "low", "volume"]
-    missing = [n for n in needed if n not in df.columns]
-    if missing:
-        st.error(f"缺少必要字段: {missing}，当前返回字段: {df.columns.tolist()}")
-        st.write(df.head())
-        st.stop()
-    df["date"] = pd.to_datetime(df["date"])
-    return df
+        if df is None or df.empty:
+            st.error(f"代码 {code} 无可用行情数据（接口返回空）！")
+            return pd.DataFrame()
+        # 字段映射
+        name_map = {
+            "date": "date", "日期": "date", "交易日期": "date",
+            "open": "open", "开盘": "open",
+            "close": "close", "收盘": "close",
+            "high": "high", "最高": "high",
+            "low": "low", "最低": "low",
+            "volume": "volume", "成交量": "volume", "成交量(手)": "volume", "成交量(股)": "volume"
+        }
+        df = df.rename(columns={k: v for k, v in name_map.items() if k in df.columns})
+        for col in ["date", "open", "close", "high", "low", "volume"]:
+            if col not in df.columns:
+                st.error(f"缺少必要字段: {col}，实际返回字段: {df.columns.tolist()}")
+                st.write(df.head())
+                return pd.DataFrame()
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+    except Exception as e:
+        st.error(f"行情数据接口异常：{e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def fetch_stock_news(code: str, code_type: str):
