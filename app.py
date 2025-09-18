@@ -143,25 +143,31 @@ def fetch_stock_concepts(code: str, code_type: str):
         return [f"获取板块失败: {e}"]
 
 @st.cache_data(ttl=300)
-def fetch_concept_fund_flow():
+def fetch_concept_fund_flow(concept_name=None):
+    import akshare as ak
+    import pandas as pd
     try:
-        df = ak.stock_board_concept_fund_flow_ths()
-        if "板块名称" not in df.columns:
-            for alt in ["name"]:
-                if alt in df.columns:
-                    df.rename(columns={alt: "板块名称"}, inplace=True)
-                    break
-        if "主力净流入" not in df.columns:
-            for col in df.columns:
-                if "净流入" in col or "inflow" in col.lower():
-                    df.rename(columns={col: "主力净流入"}, inplace=True)
-                    break
-        if "涨跌幅" not in df.columns:
-            for col in df.columns:
-                if "涨跌" in col or "percent" in col.lower():
-                    df.rename(columns={col: "涨跌幅"}, inplace=True)
-                    break
-        return df
+        # 新接口：用hist接口，取最近5日，含主力资金流/涨跌幅
+        if concept_name is None:
+            # 可选：返回所有板块最新行情/或遍历所有主流板块
+            concept_list = ak.stock_board_concept_name_ths()
+            flows = []
+            for name in concept_list['name'].head(20):  # 只查前20个热门，避免API频繁
+                try:
+                    df = ak.stock_board_concept_hist_ths(symbol=name, start_date="20230901", end_date=pd.Timestamp.today().strftime('%Y%m%d'))
+                    if not df.empty:
+                        last = df.iloc[-1]
+                        flows.append({
+                            "板块名称": name,
+                            "涨跌幅": last.get("涨跌幅", None),
+                            "主力净流入": last.get("主力资金净流入", None)
+                        })
+                except:
+                    continue
+            return pd.DataFrame(flows)
+        else:
+            df = ak.stock_board_concept_hist_ths(symbol=concept_name, start_date="20230901", end_date=pd.Timestamp.today().strftime('%Y%m%d'))
+            return df.tail(5)
     except Exception as e:
         return pd.DataFrame({"error": [str(e)]})
 
