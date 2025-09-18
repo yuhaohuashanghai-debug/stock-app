@@ -271,37 +271,42 @@ if analyze_btn:
         if df is None or df.empty:
             st.stop()
         df = add_indicators(df, indicator)
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 图表", "📰 新闻", "💰 资金流", "🤖 AI/本地分析", "📊 板块概念联动"])
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📈 图表", "📰 新闻", "💰 资金流", "🤖 AI/本地分析", "📊 板块概念联动"]
+    )
 
     with tab1:
         st.plotly_chart(plot_chart(df, code, indicator, show_ma, show_volume), use_container_width=True)
+
     with tab2:
         news_list = fetch_stock_news(code, code_type)
         st.subheader("📰 实时消息面")
         for n in news_list:
             st.write("- " + n)
-   with tab3:
+
+    with tab3:
         fund_flow = fetch_fund_flow(code, code_type)
         if code_type == "A股":
-        st.subheader("💰 资金流向（近5日）")
-        for f in fund_flow:
-            if "主力净流入" in f:
-                val = format_money(f["主力净流入"])
-                prefix = "+" if f["主力净流入"] > 0 else ""
-                st.write(f"{f['日期']} 主力净流入: {prefix}{val}")
-            elif "error" in f:
-                st.error(f["error"])
-            else:
-                st.write(f)
-    else:
-        st.subheader("💰 ETF成交额/成交量（近5日，仅供资金流参考）")
-        for f in fund_flow:
-            if "成交额" in f and "成交量" in f:
-                st.write(f"{f['日期']} 成交额: {format_money(f['成交额'])}，成交量: {format_money(f['成交量'])}")
-            elif "error" in f:
-                st.error(f["error"])
-            else:
-                st.write(f)
+            st.subheader("💰 资金流向（近5日）")
+            for f in fund_flow:
+                if "主力净流入" in f:
+                    val = format_money(f["主力净流入"])
+                    prefix = "+" if f["主力净流入"] > 0 else ""
+                    st.write(f"{f['日期']} 主力净流入: {prefix}{val}")
+                elif "error" in f:
+                    st.error(f["error"])
+                else:
+                    st.write(f)
+        else:
+            st.subheader("💰 ETF成交额/成交量（近5日，仅供资金流参考）")
+            for f in fund_flow:
+                if "成交额" in f and "成交量" in f:
+                    st.write(f"{f['日期']} 成交额: {format_money(f['成交额'])}，成交量: {format_money(f['成交量'])}")
+                elif "error" in f:
+                    st.error(f["error"])
+                else:
+                    st.write(f)
 
     with tab4:
         latest = df.iloc[-1]
@@ -331,6 +336,7 @@ if analyze_btn:
                     st.write("RSI > 70，超买风险，可能回调。")
                 else:
                     st.write("RSI 中性，市场震荡。")
+
     with tab5:
         st.subheader("📊 板块概念联动分析")
         if code_type == "A股":
