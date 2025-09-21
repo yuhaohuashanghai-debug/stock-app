@@ -4,7 +4,6 @@ import pandas_ta as ta
 import akshare as ak
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import plotly.express as px
 import requests
 
 st.set_page_config(page_title="📈 股票&ETF AI分析平台", layout="wide")
@@ -22,7 +21,7 @@ with st.sidebar:
         stop_loss = st.number_input("止损线（%）", value=-7.0, help="如达到该亏损率建议止损")
         show_volume = st.checkbox("显示成交量", value=True)
     with st.expander("📊 指标设置", expanded=True):
-        show_ma = st.multiselect("显示均线", ["MA5", "MA20"], default=["MA5", "MA20"])
+        show_ma = st.multiselect("显示均线", ["MA5", "MA20", "MA30"], default=["MA5", "MA20", "MA30"])
         indicator = st.selectbox("选择额外指标", ["MACD", "RSI", "BOLL", "KDJ"])
     with st.expander("🤖 AI 设置", expanded=False):
         DEEPSEEK_API_KEY = st.text_input(
@@ -121,9 +120,12 @@ def format_money(x):
     except:
         return str(x)
 
+# ========== 技术指标 ==========
 def add_indicators(df: pd.DataFrame, indicator: str):
     df["MA5"] = ta.sma(df["close"], length=5)
     df["MA20"] = ta.sma(df["close"], length=20)
+    df["MA30"] = ta.sma(df["close"], length=30)
+
     if indicator == "MACD":
         macd = ta.macd(df["close"])
         df["MACD"] = macd["MACD_12_26_9"]
@@ -141,6 +143,7 @@ def add_indicators(df: pd.DataFrame, indicator: str):
         df["K"] = kdj["STOCHk_14_3_3"]
         df["D"] = kdj["STOCHd_14_3_3"]
         df["J"] = 3 * df["K"] - 2 * df["D"]
+
     return df.dropna()
 
 def plot_chart(df: pd.DataFrame, code: str, indicator: str, show_ma: list, show_volume: bool):
@@ -156,6 +159,8 @@ def plot_chart(df: pd.DataFrame, code: str, indicator: str, show_ma: list, show_
         fig.add_trace(go.Scatter(x=df["date"], y=df["MA5"], name="MA5"), row=1, col=1)
     if "MA20" in show_ma:
         fig.add_trace(go.Scatter(x=df["date"], y=df["MA20"], name="MA20"), row=1, col=1)
+    if "MA30" in show_ma:
+        fig.add_trace(go.Scatter(x=df["date"], y=df["MA30"], name="MA30"), row=1, col=1)
     if show_volume:
         fig.add_trace(go.Bar(x=df["date"], y=df["volume"], name="成交量", opacity=0.4), row=2, col=1)
     if indicator == "MACD":
@@ -206,7 +211,8 @@ def deepseek_probability_predict(tech_summary, fund_flow, news_list, api_key,
 以下是某只股票/ETF的全维度数据，请结合“技术面、资金流向、消息面、持仓盈亏、止盈止损线”进行AI分析。
 分析内容：
 1. 给出未来3日的上涨概率（%）、震荡概率（%）、下跌概率（%）；
-2. 明确【买入/加仓/减仓/止盈/止损/观望】等操作建议，并详细说明原因（结合当前持仓盈亏及设定的止盈/止损线，务必优先保障风控！）。
+2. 给出未来20日和30日的上涨/震荡/下跌概率，并结合 MA20 与 MA30 趋势关系说明原因；
+3. 明确【买入/加仓/减仓/止盈/止损/观望】等操作建议，并详细说明原因（务必优先保障风控）。
 
 【持仓信息】  
 {pos_desc}
@@ -277,11 +283,18 @@ if analyze_btn:
 
     with tab4:
         latest = df.iloc[-1]
-        summary = f"收盘价:{latest['close']:.2f}, MA5:{latest['MA5']:.2f}, MA20:{latest['MA20']:.2f}"
+        summary = f"收盘价:{latest['close']:.2f}, MA5:{latest['MA5']:.2f}, MA20:{latest['MA20']:.2f}, MA30:{latest['MA30']:.2f}"
         if indicator == "MACD":
             summary += f", MACD:{latest['MACD']:.3f}, 信号线:{latest['MACDs']:.3f}"
         st.subheader("📌 技术指标总结")
         st.write(summary)
+
+        # 本地 MA20 vs MA30 趋势判断
+        if latest["MA20"] > latest["MA30"]:
+            st.info("【本地趋势判断】MA20 > MA30，中期趋势偏强。")
+        else:
+            st.info("【本地趋势判断】MA20 < MA30，中期趋势偏弱。")
+
         # 本地浮盈/止盈止损提示
         if hold_amount > 0 and hold_cost > 0:
             pnl = (latest['close'] - hold_cost) * hold_amount
@@ -293,6 +306,7 @@ if analyze_btn:
                 st.error("【止损提醒】已触及止损线，建议尽快止损离场！")
             else:
                 st.info("当前未触及止盈/止损线，建议结合AI趋势、技术面再决定。")
+
         # AI分析
         if DEEPSEEK_API_KEY:
             with st.spinner("DeepSeek AI 概率预测中..."):
